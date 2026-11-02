@@ -9,6 +9,10 @@ import { watchStudioVersion } from '@/lib/studio-version';
 
 /** `working`: an agent of the app's chat is working in it right now (it cannot be deleted meanwhile). */
 /** GET /api/version: this Studio's, and npm's latest (null when never learnt; `checking` false: never asked). */
+import { readFilmFile } from '../../../src/film-doc.mjs';
+import * as store from './web/opfs';
+import { isWeb, web, asProject } from './web/backend';
+
 export interface StudioVersion { version: string; latest: string | null; newer: boolean; checkedAt: number | null; checking: boolean; source: boolean;
   /** the update Studio runs from the top bar (lib/web-update), or one that failed */
   update?: { status: 'updating' | 'failed'; version: string; error?: string } }
@@ -118,7 +122,9 @@ export const api = {
   problems: () => call<{ problems: StudioProblem[] }>('diagnostics/problems').then((r) => r.problems),
   /** the diagnostic file (server/diagnostics.mjs): `report` and the rest, zipped into the exports folder and shown there */
   exportDiagnostics: (report: string, conversations: boolean) => call<{ path: string; files: string[]; conversations: boolean }>('diagnostics/export', { method: 'POST', json: { report, conversations } }),
-  projects: () => call<{ projects: Project[] }>('projects').then((r) => r.projects),
+  projects: (): Promise<Project[]> => isWeb()
+    ? store.listProjects().then((all) => all.map(asProject))
+    : call<{ projects: Project[] }>('projects').then((r) => r.projects),
   prefs: () => call<StudioPrefs>('prefs'),
   /** where new projects and exports go, and the free space there */
   locations: () => call<StudioLocations>('locations'),
@@ -138,40 +144,110 @@ export const api = {
   /** the system's folder dialog, opened by Studio (a page in a browser cannot learn a path): the folder, or null when
       cancelled; throws (501) where this system has none */
   pickFolder: (title: string, at?: string) => call<{ path: string | null }>('pick-folder', { method: 'POST', json: { title, ...(at ? { at } : {}) } }).then((r) => r.path),
-  newProject: (name?: string, subtitleStyle?: SubtitleStyle) => call<{ project: Project }>('projects', { method: 'POST', json: { name, subtitleStyle } }).then((r) => r.project),
+  newProject: (name?: string, _subtitleStyle?: SubtitleStyle): Promise<Project> => isWeb()
+    ? store.createProject(name).then(asProject)
+    : call<{ project: Project }>('projects', { method: 'POST', json: { name, subtitleStyle: _subtitleStyle } }).then((r) => r.project),
   /** open a folder (its full path) as a project: made one when it is not yet */
   openFolder: (path: string) => call<{ project: Project }>('projects', { method: 'POST', json: { path } }).then((r) => r.project),
-  rename: (id: string, name: string) => call<{ project: Project }>(p(id), { method: 'PATCH', json: { name } }).then((r) => {
-    studioHost?.projectChanged?.(r.project);
-    return r.project;
-  }),
-  forget: (id: string) => call<object>(p(id), { method: 'DELETE' }),
-  film: (id: string) => call<ProjectFilm>(p(id)),
+  rename: (id: string, name: string): Promise<Project> => {
+    if (isWeb()) return store.renameProject(id, name).then((r) => { if (!r) throw new ApiError('the project is gone', 404, {}); return asProject(r); });
+    return call<{ project: Project }>(p(id), { method: 'PATCH', json: { name } }).then((r) => {
+      studioHost?.projectChanged?.(r.project);
+      return r.project;
+    });
+  },
+  forget: (id: string): Promise<object> => {
+    if (isWeb()) return store.deleteProject(id).then(() => ({}));
+    return call<object>(p(id), { method: 'DELETE' });
+  },
+  film: (id: string): Promise<ProjectFilm> => {
+    if (isWeb()) {
+      web();
+      return store.getProject(id).then(async (project) => {
+        if (!project) throw new ApiError('gone', 404, {});
+        const text = (await store.readFilm(id))?.text ?? '';
+        const rev = text ? await store.filmRev(text) : '';
+        /* the value is read by the format's own reader through ops.mjs at apply time; a web film
+           hands the raw text and an empty value, and the editor reads it through use-film's
+           `broken` path only when the text cannot be read — so parse it here with the same code
+           the server used (readFilmFile lives in src/film-doc.mjs, browser-safe) */
+        const read = readFilmFile(text);
+        return {
+          project: asProject(project),
+          folder: id,
+          text,
+          rev,
+          value: read.doc ? read.value : null,
+          doc: read.doc,
+          problems: read.problems ?? [],
+          filmMissing: text.trim() === '',
+        };
+      });
+    }
+    return call<ProjectFilm>(p(id));
+  },
   /** the person opened it here: the one `openfilm open` alone comes back to */
-  opened: (id: string) => call<{ project: Project }>(`${p(id)}/opened`, { method: 'POST' }),
+  opened: (id: string): Promise<{ project: Project }> => {
+    if (isWeb()) return store.markOpened(id).then(() => store.getProject(id)).then((r) => { if (!r) throw new ApiError('gone', 404, {}); return { project: asProject(r) }; });
+    return call<{ project: Project }>(`${p(id)}/opened`, { method: 'POST' });
+  },
   /* `undo`: the edit puts back an earlier one (Studio keeps the person's edits over an agent's writes until then) */
   edit: (id: string, base: string | null, ops: Op[], undo = false) => call<{ text: string; rev: string; value: Film; doc: Film; rebased: boolean }>(`${p(id)}/edit`, { method: 'POST', json: { base, ops, ...(undo ? { undo: true } : {}) } }),
-  files: (id: string) => call<Listing>(`${p(id)}/files`),
+  files: (id: string): Promise<Listing> => isWeb()
+    ? store.listFiles(id).then((l) => ({ files: l.files, folders: l.folders, pages: l.pages }))
+    : call<Listing>(`${p(id)}/files`),
   /** the editor's settings of the project (`.film/settings.json`): its frame rate, its tracks' names */
-  settings: (id: string) => call<{ settings: ProjectSettings }>(`${p(id)}/settings`).then((r) => r.settings),
+  settings: (id: string): Promise<ProjectSettings> => (isWeb()
+    ? Promise.resolve({})
+    : call<{ settings: ProjectSettings }>(`${p(id)}/settings`).then((r) => r.settings)),
   /** change some of them (null takes one away); answers them all as kept */
-  patchSettings: (id: string, patch: { fps?: number | null; trackNames?: ProjectSettings['trackNames'] | null; trackHeights?: ProjectSettings['trackHeights'] | null }) => (
-    call<{ settings: ProjectSettings }>(`${p(id)}/settings`, { method: 'PATCH', json: patch }).then((r) => r.settings)
-  ),
+  patchSettings: (id: string, patch: { fps?: number | null; trackNames?: ProjectSettings['trackNames'] | null; trackHeights?: ProjectSettings['trackHeights'] | null }): Promise<ProjectSettings> => (isWeb()
+    ? Promise.resolve(patch as ProjectSettings)
+    : (
+      call<{ settings: ProjectSettings }>(`${p(id)}/settings`, { method: 'PATCH', json: patch }).then((r) => r.settings)
+    )),
   /** its markers (`.film/markers.json`, lib/markers): the whole list, read and written */
-  markers: (id: string) => call<{ markers: unknown }>(`${p(id)}/markers`).then((r) => r.markers),
-  putMarkers: (id: string, markers: unknown[]) => call<{ markers: unknown }>(`${p(id)}/markers`, { method: 'PUT', json: { markers } }).then((r) => r.markers),
-  /** the loudness of a part of a file's sound (its own seconds): integrated LUFS (null: silent) and true peak */
-  loudness: (id: string, path: string, from: number, to: number) => call<{ lufs: number | null; peak: number | null }>(
-    `${p(id)}/media?what=loudness&path=${encodeURIComponent(path)}&from=${from}&to=${to}`,
-  ),
-  /** a video's frame (`ms` of its own time) made a still beside it; answers its path */
-  freezeFrame: (id: string, path: string, ms: number) => call<{ path: string }>(`${p(id)}/files/still`, { method: 'POST', json: { path, ms } }).then((r) => r.path),
+  markers: (id: string): Promise<unknown> => (isWeb()
+    ? store.readFileText(id, '.film/markers.json').then((text) => (text ? JSON.parse(text) : []))
+    : call<{ markers: unknown }>(`${p(id)}/markers`).then((r) => r.markers)),
+  putMarkers: (id: string, markers: unknown[]): Promise<unknown> => {
+    if (isWeb()) {
+      web();
+      return store.putFile(id, '.film/markers.json', new Blob([JSON.stringify(markers)])).then(() => markers);
+    }
+    return (
+      call<{ markers: unknown }>(`${p(id)}/markers`, { method: 'PUT', json: { markers } }).then((r) => r.markers)
+    );
+  },
+  /** the loudness of a part of a file's sound (its own seconds): integrated LUFS (null: silent) and true peak.
+      Web: no ffmpeg here — answers "not measured"; the web normalize flow waits for the OfflineAudioContext
+      batch (tracked in tasks 2.x), and until then reports unmeasured rather than guessing. */
+  loudness: (id: string, path: string, from: number, to: number): Promise<{ lufs: number | null; peak: number | null }> => {
+    if (isWeb()) return Promise.resolve({ lufs: null, peak: null });
+    return call<{ lufs: number | null; peak: number | null }>(
+      `${p(id)}/media?what=loudness&path=${encodeURIComponent(path)}&from=${from}&to=${to}`,
+    );
+  },
+  /** a video's frame (`ms` of its own time) made a still beside it; answers its path.
+      Web: waits for the capture batch (3.x) — a plain "not implemented" beats a wrong frame. */
+  freezeFrame: (id: string, path: string, ms: number): Promise<string> => {
+    if (isWeb()) return Promise.reject(new ApiError('freeze frame needs the capture batch (3.x)', 501, {}));
+    return call<{ path: string }>(`${p(id)}/files/still`, { method: 'POST', json: { path, ms } }).then((r) => r.path);
+  },
   /** The project's own cover for its card (studio/server/cover.mjs): a picture from this computer, a picture of the project,
       the film at `ms`, or none (null: its film's poster again). Each answers when it was set. */
-  setCover: (id: string, from: { file: Blob } | { path: string } | { ms: number }) => call<{ cover: number | null }>(`${p(id)}/cover`,
-    'file' in from ? { method: 'PUT', body: from.file, headers: { 'content-type': 'application/octet-stream' } } : { method: 'POST', json: from }).then((r) => r.cover),
-  clearCover: (id: string) => call<{ cover: null }>(`${p(id)}/cover`, { method: 'DELETE' }).then(() => null),
+  setCover: (id: string, from: { file: Blob } | { path: string } | { ms: number }): Promise<number | null> => {
+    if (isWeb()) {
+      web();
+      if (!('file' in from)) throw new ApiError('a web cover is a file', 400, {});
+      return from.file.arrayBuffer().then((data) => store.setCover(id, data));
+    }
+    return call<{ cover: number | null }>(`${p(id)}/cover`,
+      'file' in from ? { method: 'PUT', body: from.file, headers: { 'content-type': 'application/octet-stream' } } : { method: 'POST', json: from }).then((r) => r.cover);
+  },
+  clearCover: (id: string): Promise<null> => (isWeb()
+    ? store.setCover(id, null).then(() => null)
+    : call<{ cover: null }>(`${p(id)}/cover`, { method: 'DELETE' }).then(() => null)),
   answerAsk: (askId: string, allow: boolean) => call<{ answered: boolean }>(`get/asks/${encodeURIComponent(askId)}`, { method: 'POST', json: { allow } }),
   /** the provider's own page for its balance, opened in the person's browser */
   openBilling: (providerId: string) => call<Record<string, never>>(`providers/${encodeURIComponent(providerId)}/billing`, { method: 'POST' }),
@@ -186,12 +262,33 @@ export const api = {
     `${p(id)}/saved/take`, { method: 'POST', json: { path } },
   ),
   /** a page of the project as text, with its rev (studio/server/page-text.mjs) */
-  readPage: (id: string, path: string) => call<{ text: string; rev: string }>(`${p(id)}/page?path=${encodeURIComponent(path)}`),
+  readPage: (id: string, path: string): Promise<{ text: string; rev: string }> => {
+    if (isWeb()) {
+      web();
+      return store.readFileText(id, path).then(async (text) => {
+        if (text === null) throw new ApiError('no such page', 404, {});
+        return { text, rev: await store.filmRev(text) };
+      });
+    }
+    return call<{ text: string; rev: string }>(`${p(id)}/page?path=${encodeURIComponent(path)}`);
+  },
   /** a page written (text null: taken away) when it is still the page of rev `expect` (null: none there yet); its new
       rev. `undo`: the write takes back one of Studio's (a paste undone) */
-  writePage: (id: string, path: string, text: string | null, expect: string | null, undo = false) => (
-    call<{ rev: string | null }>(`${p(id)}/page`, { method: 'PUT', json: { path, text, expect, ...(undo ? { undo: true } : {}) } }).then((r) => r.rev)
-  ),
+  writePage: (id: string, path: string, text: string | null, _expect: string | null, _undo = false): Promise<string | null> => {
+    if (isWeb()) {
+      web();
+      return (text === null
+        ? store.deleteFile(id, path).then(() => null)
+        : store.putFile(id, path, new Blob([text])).then(async () => {
+          const read = await store.readFileText(id, path);
+          return read === null ? null : store.filmRev(read);
+        })
+      );
+    }
+    return (
+      call<{ rev: string | null }>(`${p(id)}/page`, { method: 'PUT', json: { path, text, expect: _expect, ...(_undo ? { undo: true } : {}) } }).then((r) => r.rev)
+    );
+  },
   /** a clip of project `from` brought into this one with the files it needs (layers pasted from there): its src here */
   bringClip: (id: string, from: string, clip: Record<string, unknown> & { src: string }) => (
     call<{ clip: Record<string, unknown> & { src: string } }>(`${p(id)}/bring`, { method: 'POST', json: { from, clip } }).then((r) => r.clip)

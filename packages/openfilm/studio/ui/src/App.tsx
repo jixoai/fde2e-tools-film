@@ -17,6 +17,7 @@ import { ProjectsPopover } from './components/ProjectsLibrary';
 import { Launcher } from './components/Launcher';
 import { studioHost } from './lib/host';
 import { WhatsNew } from './components/WhatsNew';
+import { isWeb } from './web/backend';
 import { sourcesApi } from './lib/project-sources';
 import { LIST_WAIT_MS, within } from './lib/projects-page';
 
@@ -87,7 +88,7 @@ export function App() {
           <ProjectsPopover open currentProjectId="" onOpen={(next) => go(`/projects/${next}`)} onCurrentRemoved={() => {}} />
         </div>
       );
-  return <>{page}<ConnectionNotice /><WhatsNew /></>;
+  return <>{page}<ConnectionNotice />{!isWeb() && <WhatsNew />}</>;
 }
 
 /**

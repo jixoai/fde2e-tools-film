@@ -9,6 +9,8 @@
 import * as React from 'react';
 import { BookmarkPlus, ClipboardCopy, ClipboardPaste, GalleryVerticalEnd, Layers, LibraryBig, MessageSquarePlus, MonitorDown, Settings2, TriangleAlert, Upload } from 'lucide-react';
 import { applyOps } from '../../../server/ops.mjs';
+import * as store from '../web/opfs';
+import { isWeb, web } from '../web/backend';
 import { api, ApiError, PREFS_EVENT, projectEvents, type Clip, type Film, type Listing, type Op, type ProjectFilm, type ProjectSettings } from '@/api';
 import { useT } from '@/i18n';
 import { useFilm, type OutsideStep, type Step } from '@/editor/use-film';
@@ -2579,15 +2581,32 @@ export function ProjectView({ projectId, onProject, onLeave }: {
       window.removeEventListener('dragend', done);
     };
   }, []);
-  const onMove = React.useCallback(async (from: string, to: string) => mediaResult(await fetch(`${projectApi}/files`, {
-    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from, to }),
-  })), [projectApi]);
+  const onMove = React.useCallback(async (from: string, to: string) => {
+    if (isWeb()) {
+      web();
+      const read = await store.readFileBytes(projectId, from);
+      if (read === null) return 'failed' as const;
+      await store.putFile(projectId, to, read);
+      await store.deleteFile(projectId, from);
+      return 'ok' as const;
+    }
+    return mediaResult(await fetch(`${projectApi}/files`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from, to }),
+    }));
+  }, [projectApi, projectId]);
   const onMoveCheck = React.useCallback(async (from: string, to: string) => {
     const res = await fetch(`${projectApi}/files`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from, to, check: true }) });
     const body = await res.json().catch(() => ({})) as { unseen?: { file: string; unseen: string[] }[] };
     return res.ok ? body.unseen ?? [] : [];
   }, [projectApi]);
-  const onDelete = React.useCallback(async (path: string) => mediaResult(await fetch(`${projectApi}/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' })), [projectApi]);
+  const onDelete = React.useCallback(async (path: string) => {
+    if (isWeb()) {
+      web();
+      await store.deleteFile(projectId, path);
+      return 'ok' as const;
+    }
+    return mediaResult(await fetch(`${projectApi}/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' }));
+  }, [projectApi, projectId]);
   const onExtractAudio = React.useCallback(async (path: string) => mediaResult(await fetch(`${projectApi}/files/audio`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }),
   })), [projectApi]);
@@ -2595,9 +2614,17 @@ export function ProjectView({ projectId, onProject, onLeave }: {
   const onSetCover = React.useCallback((path: string) => {
     void api.setCover(projectId, { path }).then(() => toast.show(t('projects.coverSet')), () => toast.showError(t('projects.coverFailed')));
   }, [projectId, toast, t]);
-  const onNewFolder = React.useCallback(async (path: string) => mediaResult(await fetch(`${projectApi}/folders`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }),
-  })), [projectApi]);
+  const onNewFolder = React.useCallback(async (path: string) => {
+    if (isWeb()) {
+      web();
+      /* OPFS folders come into being when a file is put in them; make that true now with a marker */
+      await store.putFile(projectId, `${path}/.keep`, new Blob(['']));
+      return 'ok' as const;
+    }
+    return mediaResult(await fetch(`${projectApi}/folders`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }),
+    }));
+  }, [projectApi, projectId]);
   const reveal = React.useCallback((path: string, original?: boolean) => {
     void fetch(`${projectApi}/reveal`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, ...(original ? { original } : {}) }) });
   }, [projectApi]);
@@ -3567,7 +3594,7 @@ export function ProjectView({ projectId, onProject, onLeave }: {
       />
       <PasteAttrsDialog attrs={pasteAttrsOpen ? copiedAttrs : null} onPaste={doPasteAttrs} onCancel={() => setPasteAttrsOpen(false)} />
       <ExportTray ref={exportTrayRef} projectId={projectId} onError={toast.showError} inset={hostPanel?.open ? hostPanel.width : 0} />
-      <SpendAsks projectId={projectId} />
+      {!isWeb() && <SpendAsks projectId={projectId} />}
       <Toast toast={toast.current} />
     </div>
   );
