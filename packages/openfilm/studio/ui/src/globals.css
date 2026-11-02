@@ -1,5 +1,31 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
 @import '@fontsource-variable/inter';
+
+/* shadcn/ui（base-nova 收编件）的主题桥：官方组件按 shadcn 语义令牌取色
+   （--background/--foreground/--primary/--muted/--ring/--destructive …），
+   这里把它们映射到本仓既有 design token（--bg/--text/--accent/--border …）——
+   官方组件零改动接入，主题仍由本仓 token 单源。 */
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--card-bg);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--tooltip-bg);
+  --color-popover-foreground: var(--tooltip-text);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--on-accent);
+  --color-secondary: var(--surface-3);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--accent-soft);
+  --color-muted-foreground: var(--text-muted);
+  --color-accent: var(--accent-soft);
+  --color-accent-foreground: var(--text);
+  --color-destructive: #c0392b;
+  --color-border: var(--border);
+  --color-input: var(--border-strong);
+  --color-ring: var(--accent);
+}
 
 /* `dark:` follows the app's theme (`<html data-theme>`, set at startup from the saved choice), not the system's
    directly: when the two differ, a system-driven `dark:` would paint the wrong side. */
