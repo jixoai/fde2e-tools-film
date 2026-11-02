@@ -143,7 +143,7 @@ export const en = {
     goneApp: 'Studio has stopped. Quit and reopen the FDE2E Film app to bring it back.',
     copied: 'Copied',
     lockedTitle: 'This browser isn’t signed in to Studio',
-    lockedBody: 'Studio is running, but it only lets in a browser that opened it once with its key. Open the full address `openfilm open` (or `pnpm dev`) printed, the one with ?key= in it; after that, this browser can use Studio’s address as it is.',
+    lockedBody: 'Studio is running, but it only lets in a browser that opened it once with its key. Open the full address `pnpm dev` printed, the one with ?key= in it; after that, this browser can use Studio’s address as it is.',
     lockedHow: 'To get it again, run',
   },
   projects: {

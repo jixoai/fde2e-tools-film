@@ -143,7 +143,7 @@ export const zhCN: Words = {
     goneApp: 'Studio 已停止运行。退出并重新打开 FDE2E Film 应用即可恢复。',
     copied: '已复制',
     lockedTitle: '这个浏览器还没有登录 Studio',
-    lockedBody: 'Studio 正在运行，但只接受用带 key 的地址打开过一次的浏览器。请打开 `openfilm open`（开发时是 `pnpm dev`）打印的完整地址，也就是带 ?key= 的那个；打开一次之后，这个浏览器就能直接用 Studio 的地址了。',
+    lockedBody: 'Studio 正在运行，但只接受用带 key 的地址打开过一次的浏览器。请打开 `pnpm dev` 打印的完整地址，也就是带 ?key= 的那个；打开一次之后，这个浏览器就能直接用 Studio 的地址了。',
     lockedHow: '想重新拿到地址，运行',
   },
   projects: {

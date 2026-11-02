@@ -142,7 +142,7 @@ export const ja: Words = {
     goneApp: 'Studio が停止しました。FDE2E Film アプリを終了して開き直すと復旧します。',
     copied: 'コピーしました',
     lockedTitle: 'このブラウザーは Studio にサインインしていません',
-    lockedBody: 'Studio は動いていますが、キー付きのアドレスで一度開いたブラウザーしか受け付けません。`openfilm open`（開発中は `pnpm dev`）が表示した ?key= 付きの完全なアドレスを開いてください。一度開けば、このブラウザーは Studio のアドレスをそのまま使えます。',
+    lockedBody: 'Studio は動いていますが、キー付きのアドレスで一度開いたブラウザーしか受け付けません。`pnpm dev` が表示した ?key= 付きの完全なアドレスを開いてください。一度開けば、このブラウザーは Studio のアドレスをそのまま使えます。',
     lockedHow: 'アドレスをもう一度得るには',
   },
   projects: {

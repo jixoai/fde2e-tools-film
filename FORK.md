@@ -2,7 +2,7 @@
 
 > FDE2E Film：纯 Web 在线剪辑工具。本仓是 [openfilm/openfilm](https://github.com/openfilm/openfilm)（MIT）的
 > 破坏性转化 fork——CLI 操控转 WebMCP、ffmpeg CLI 转浏览器内 encodeBackend、本地文件面转 OPFS。
-> 对外部署 `film.tool.fde2e.com`；对外品牌 **FDE2E**（不挂上游商标，见 TRADEMARK.md）。
+> 对外部署 `film.tool.fde2e.com`；对外品牌 **FDE2E**（不挂上游商标——上游 TRADEMARK.md 随 fork 切除，其商标边界以本文件为准）。
 
 ## 锚定
 
@@ -13,6 +13,7 @@
 | fork 方式 | 上传全树后新建 `origin`（jixoai/fde2e-tools-film），上游保留为 `upstream` remote；**不向上游回 PR**，fork 独立演进 |
 | 示例索引 | 上游 `openfilm/examples`，锚定见 `packages/openfilm/examples-index/SOURCE`（T13 牌照核查引用 `65d717b` / index 锚 `2e8f478`） |
 | 官方 skills | 上游 `openfilm/skills`，锚定见 `packages/openfilm/skills/SOURCE` |
+| 暂留面 | `src/skills-cli.mjs`（CLI 技能安装逻辑）与 `playwright-core` 渲染管线均为**暂留**：后者由 batch 3 捕获车道接管时切，前者随 WebMCP 技能面定形时处置（FORK.md 登记，避免未申报残渣） |
 
 ## 改名决策记录
 

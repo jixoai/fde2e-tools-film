@@ -113,7 +113,9 @@ function git(args, { cwd, signal, onLine, input } = {}) {
     const child = spawn('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'protocol.ext.allow=never', ...args], {
       cwd,
       windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_PROGRESS_DELAY: '0' },
+      /* LC_ALL=C: progress lines are matched verbatim ('Receiving objects') below, so a
+         translated git (any locale) would read as 0% forever */
+      env: { ...process.env, LC_ALL: 'C', LANG: 'C', GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_PROGRESS_DELAY: '0' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     child.stdin.on('error', () => {}).end(input ?? '');

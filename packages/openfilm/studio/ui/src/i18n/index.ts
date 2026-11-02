@@ -3,7 +3,7 @@
  * path in neither comes back as itself, so a typo shows on screen instead of an empty label. Placeholders (`{n}`) are
  * filled by the caller.
  *
- * The language is the person's choice in Settings → General, kept in localStorage `openfilm.language`, or the
+ * The language is the person's choice in Settings → General, kept in localStorage `fde2e.film.language`, or the
  * system's ("system", the default: the first of the browser's languages there is a table for, else English). It is
  * shown as `<html lang>`, which an app embedding Studio reads to match it.
  */
@@ -25,7 +25,7 @@ export const LANGUAGES = [
 export type Language = (typeof LANGUAGES)[number]['code'];
 export type LanguageChoice = Language | 'system';
 
-const KEY = 'openfilm.language';
+const KEY = 'fde2e.film.language';
 
 function node(table: unknown, path: string): unknown {
   let cur = table;

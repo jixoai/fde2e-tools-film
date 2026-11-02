@@ -34,7 +34,6 @@
   "files": [
     "README.md",
     "SPEC.md",
-    "TRADEMARK.md",
     "src",
     "!src/*.test.mjs",
     "MANUAL.md",

@@ -142,7 +142,7 @@ export const es: Words = {
     goneApp: 'Studio se ha detenido. Cierra y vuelve a abrir la app FDE2E Film para recuperarlo.',
     copied: 'Copiado',
     lockedTitle: 'Este navegador no ha entrado en Studio',
-    lockedBody: 'Studio está en marcha, pero solo deja entrar a un navegador que lo abrió una vez con su clave. Abre la dirección completa que mostró `openfilm open` (o `pnpm dev`), la que lleva ?key=; después, este navegador puede usar la dirección de Studio tal cual.',
+    lockedBody: 'Studio está en marcha, pero solo deja entrar a un navegador que lo abrió una vez con su clave. Abre la dirección completa que mostró `pnpm dev`, la que lleva ?key=; después, este navegador puede usar la dirección de Studio tal cual.',
     lockedHow: 'Para obtenerla de nuevo, ejecuta',
   },
   projects: {
