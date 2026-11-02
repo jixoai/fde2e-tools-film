@@ -1,16 +1,13 @@
 {
   "name": "openfilm",
   "version": "0.2.7",
-  "description": "The open source AI video agent: films as web pages, the manual that teaches your coding agent to make them, the `openfilm` command, and Studio, the editor to change anything in them.",
+  "description": "The film format (film.html / window.film) and Studio, the editor. Web edition of OpenFilm (MIT) for fde2e.",
   "license": "MIT",
-  "homepage": "https://openfilm.dev",
+  "homepage": "https://github.com/jixoai/fde2e-tools-film",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openfilm/openfilm.git",
+    "url": "git+https://github.com/jixoai/fde2e-tools-film.git",
     "directory": "packages/openfilm"
-  },
-  "bugs": {
-    "url": "https://github.com/openfilm/openfilm/issues"
   },
   "keywords": [
     "video",
@@ -22,9 +19,6 @@
     "render"
   ],
   "type": "module",
-  "bin": {
-    "openfilm": "bin/openfilm.mjs"
-  },
   "exports": {
     "./film-doc": "./src/film-doc.mjs",
     "./host": "./src/host.mjs",
@@ -33,7 +27,6 @@
     "./render": "./src/render.mjs",
     "./problems": "./src/problems.mjs",
     "./skills": "./src/skills.mjs",
-    "./skills-cli": "./src/skills-cli.mjs",
     "./studio": "./studio/server/server.mjs",
     "./studio-ui/*": "./studio/ui/src/*",
     "./package.json": "./package.json"
@@ -42,9 +35,6 @@
     "README.md",
     "SPEC.md",
     "TRADEMARK.md",
-    "bin",
-    "skills",
-    "examples-index",
     "src",
     "!src/*.test.mjs",
     "MANUAL.md",
@@ -59,17 +49,12 @@
   "engines": {
     "node": ">=22.2"
   },
-  "dependencies": {
-    "playwright-core": "1.61.1"
-  },
+  "dependencies": {},
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "test": "node --test --test-concurrency=1 --test-timeout=300000 src/*.test.mjs studio/*.test.mjs studio/server/*.test.mjs studio/server/providers/*.test.mjs studio/ui/src/editor/*.test.ts studio/ui/src/lib/*.test.ts studio/ui/src/components/*.test.ts",
     "typecheck": "tsc -p studio/server && tsc -p studio/ui",
-    "build:ui": "vite build --config studio/ui/vite.config.ts",
-    "prepare": "npm run build:ui",
-    "prepack": "node scripts/product.mjs official",
-    "postpack": "node scripts/product.mjs restore"
+    "build:ui": "vite build --config studio/ui/vite.config.ts"
   },
   "devDependencies": {
     "@fontsource-variable/inter": "^5.3.0",

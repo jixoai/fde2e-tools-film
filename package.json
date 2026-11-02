@@ -1,7 +1,7 @@
 {
-  "name": "openfilm-monorepo",
+  "name": "fde2e-tools-film",
   "private": true,
-  "description": "OpenFilm: the open source AI video agent. The `openfilm` package (the format, the CLI and Studio), the desktop app, and what the clients share with the OpenFilm service.",
+  "description": "FDE2E Film: the pure-web film editor (based on OpenFilm, MIT). The `openfilm` package holds the film format and Studio; CLI/desktop/playwright surfaces are cut away and re-webbed per the web-openfilm-editor change.",
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@9.15.9",
@@ -10,19 +10,10 @@
   },
   "scripts": {
     "dev": "pnpm --filter openfilm dev",
-    "dev:desktop": "pnpm --filter @openfilm/desktop start",
-    "build": "pnpm --filter openfilm build:ui && pnpm --filter @openfilm/desktop build:shell",
+    "build": "pnpm --filter openfilm build:ui",
     "test": "pnpm -r --workspace-concurrency=1 --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
-    "audit:public": "node scripts/audit-public.mjs",
-    "check:pack": "node scripts/check-pack.mjs",
-    "skills:sync": "node scripts/sync-skills.mjs",
-    "changeset": "changeset",
     "examples:sync": "node scripts/sync-examples.mjs"
-  },
-  "devDependencies": {
-    "@changesets/changelog-github": "0.5.2",
-    "@changesets/cli": "2.31.1"
   },
   "pnpm": {
     "overrides": {
