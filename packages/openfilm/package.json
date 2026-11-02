@@ -49,7 +49,9 @@
   "engines": {
     "node": ">=22.2"
   },
-  "dependencies": {},
+  "dependencies": {
+    "playwright-core": "1.61.1"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "test": "node --test --test-concurrency=1 --test-timeout=300000 src/*.test.mjs studio/*.test.mjs studio/server/*.test.mjs studio/server/providers/*.test.mjs studio/ui/src/editor/*.test.ts studio/ui/src/lib/*.test.ts studio/ui/src/components/*.test.ts",

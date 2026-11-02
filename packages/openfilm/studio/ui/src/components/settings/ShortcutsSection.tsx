@@ -21,7 +21,7 @@ import { SettingsSelect } from './SettingsSelect';
 import { SettingsButton, SettingsPage, SettingsSegmented, settingsError } from './ui';
 
 /** The built-in schemes are named for the app whose keys they give. */
-const SCHEME_NAMES: Record<(typeof BUILT_IN_SCHEMES)[number], string> = { openfilm: 'OpenFilm', premiere: 'Premiere Pro', fcp: 'Final Cut Pro X' };
+const SCHEME_NAMES: Record<(typeof BUILT_IN_SCHEMES)[number], string> = { openfilm: 'FDE2E Film', premiere: 'Premiere Pro', fcp: 'Final Cut Pro X' };
 
 /** A row: its words and keys; `held`: combinations pressed while another is held (K, then J). */
 type Row = { id: string; label: string; keys: readonly string[]; action?: ActionId; held?: readonly (readonly string[])[] };

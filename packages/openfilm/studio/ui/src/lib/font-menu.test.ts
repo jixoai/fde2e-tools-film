@@ -71,7 +71,7 @@ test('recent, samples, and project faces in Studio', () => {
   assert.deepEqual(cjk.flatMap((s) => s.rows.map((r) => [r.family, sampleOf(r)])), [['PingFang SC', '永'], ['Heiti SC', '永'], ['Apple Chancery', null]],
     'an installed font\'s sample only when it draws it; a named one by its name');
   assert.equal(localeFromName('Source Han Sans JP'), 'ja-JP');
-  assert.equal(rowFontFamily({ family: 'Geist', project: true }), '"OpenFilm Project Geist", "Geist", system-ui');
+  assert.equal(rowFontFamily({ family: 'Geist', project: true }), '"FDE2E Film Project Geist", "Geist", system-ui');
   const css = projectFontFaceCss([{ ...project[0]!, faces: [{ ...face('Geist', 'fonts/My Geist.ttf'), src: [{ path: 'fonts/My Geist.ttf', format: 'truetype' }, { local: 'Geist' }] }] }], 'http://localhost:5/p/t/');
-  assert.equal(css, '@font-face { font-family: "OpenFilm Project Geist"; src: url("http://localhost:5/p/t/fonts/My%20Geist.ttf") format("truetype"), local("Geist"); font-weight: 100 900; font-style: normal; font-display: swap; }');
+  assert.equal(css, '@font-face { font-family: "FDE2E Film Project Geist"; src: url("http://localhost:5/p/t/fonts/My%20Geist.ttf") format("truetype"), local("Geist"); font-weight: 100 900; font-style: normal; font-display: swap; }');
 });

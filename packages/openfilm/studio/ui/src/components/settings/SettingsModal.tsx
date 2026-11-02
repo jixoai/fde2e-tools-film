@@ -36,9 +36,8 @@ const NAV: Array<{ group: 'settings' | 'help'; sections: SettingsSection[] }> = 
 
 /** where OpenFilm lives, linked at the foot of the nav */
 const LINKS = [
-  { label: 'settings.links.github', href: 'https://github.com/openfilm/openfilm' },
-  { label: 'settings.links.examples', href: 'https://github.com/openfilm/examples' },
-  { label: 'settings.links.site', href: 'https://openfilm.dev' },
+  { label: 'settings.links.github', href: 'https://github.com/jixoai/fde2e-tools-film' },
+  { label: 'settings.links.upstream', href: 'https://github.com/openfilm/openfilm' },
 ];
 
 const SECTION_ICON: Record<SettingsSection, React.ReactNode> = {
@@ -178,6 +177,12 @@ export function SettingsModal({ open, onClose, section: opening }: SettingsModal
               <a key={link.href} href={link.href} target="_blank" rel="noreferrer" className="rounded-[4px] transition hover:text-[var(--text)]">{t(link.label)}</a>
             ))}
           </div>
+          {/* attribution footnote (T01): "based on OpenFilm" points at our fork, not upstream */}
+          <p className="px-2.5 pt-2 text-[12px] text-[var(--text-faint)]">
+            based on{' '}
+            <a href="https://github.com/jixoai/fde2e-tools-film" target="_blank" rel="noreferrer"
+              className="rounded-[4px] underline underline-offset-2 transition hover:text-[var(--text)]">OpenFilm</a>
+          </p>
         </nav>
 
         <div className="relative flex min-w-0 flex-1 flex-col">
@@ -365,7 +370,7 @@ function AboutGroup() {
   return (
     <SettingsGroup title={t('settings.about.group')}>
       <SettingsItem
-        title={info ? `OpenFilm ${info.version}` : 'OpenFilm'}
+        title={info ? `FDE2E Film ${info.version}` : 'FDE2E Film'}
         description={status}
         control={inApp || !info?.checking ? null : (
           <SettingsButton disabled={state === 'checking'} onClick={check}>{t('settings.about.check')}</SettingsButton>
@@ -463,7 +468,7 @@ function AppAboutGroup() {
   return (
     <SettingsGroup title={t('settings.about.group')}>
       <SettingsItem
-        title={`OpenFilm ${s?.version ?? ''}`.trim()}
+        title={`FDE2E Film ${s?.version ?? ''}`.trim()}
         badge={s?.channel === 'beta' ? <span className="rounded-full bg-[var(--fill-tsp)] px-2 py-0.5 text-[11.5px] text-[var(--text-muted)]">beta</span> : null}
         description={description}
         control={control}

@@ -1,5 +1,5 @@
 /**
- * The theme: light, dark or the system's, dark until the person chooses. The choice is kept in localStorage `openfilm.theme` and shown as
+ * The theme: light, dark or the system's, dark until the person chooses. The choice is kept in localStorage `fde2e.film.theme` and shown as
  * `<html data-theme>`; index.html applies it before the first paint, this keeps it current afterwards, in every page
  * of Studio that is open.
  */
@@ -7,7 +7,7 @@ import React from 'react';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 
-const KEY = 'openfilm.theme';
+const KEY = 'fde2e.film.theme';
 const dark = () => window.matchMedia('(prefers-color-scheme: dark)');
 
 function saved(): ThemeMode {

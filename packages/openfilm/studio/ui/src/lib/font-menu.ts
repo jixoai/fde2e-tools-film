@@ -206,7 +206,7 @@ export function pushRecent(list: readonly string[], family: string, max = RECENT
  * A project font is set in Studio under this prefix: named as it is, it would replace an installed font of the same
  * name in Studio's own interface.
  */
-export const PROJECT_FONT_PREFIX = 'OpenFilm Project ';
+export const PROJECT_FONT_PREFIX = 'FDE2E Film Project ';
 
 /** The CSS a menu row is set in: the project's face first, then the installed one, then the system's. */
 export function rowFontFamily(row: FontRow): string {
