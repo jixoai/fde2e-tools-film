@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FDE2E Film</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%20role%3D%22img%22%20aria-label%3D%22FDE2E%20Film%22%3E%3Ctitle%3EFDE2E%20Film%3C%2Ftitle%3E%3Cstyle%3E.i%7Bfill%3A%23111%7D%40media%20(prefers-color-scheme%3Adark)%7B.i%7Bfill%3A%23fff%7D%7D%3C%2Fstyle%3E%3Cg%20class%3D%22i%22%3E%3Crect%20x%3D%2220%22%20y%3D%2212%22%20width%3D%2264%22%20height%3D%2220%22%20rx%3D%225%22%2F%3E%3Crect%20x%3D%2220%22%20y%3D%2268%22%20width%3D%2264%22%20height%3D%2220%22%20rx%3D%225%22%2F%3E%3Crect%20x%3D%2272%22%20y%3D%2220%22%20width%3D%2216%22%20height%3D%2260%22%20rx%3D%225%22%2F%3E%3Cpath%20d%3D%22M38%2018H52C55.3%2018%2058%2020.7%2058%2024V36L66%2042C68%2043.5%2068%2046.5%2066%2048L58%2054V82C58%2085.3%2055.3%2088%2052%2088H38C34.7%2088%2032%2085.3%2032%2082V54L24%2048C22%2046.5%2022%2043.5%2024%2042L32%2036V24C32%2020.7%2034.7%2018%2038%2018Z%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
+<script>
+  /* the theme before the first paint, so the wrong one never flashes: dark unless the person chose another */
+  (function () {
+    var t = 'dark';
+    try { t = localStorage.getItem('fde2e.film.theme') || 'dark'; } catch (e) {}
+    if (t === 'system') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t === 'dark' ? 'dark' : 'light';
+  })();
+</script>
+</head>
+<body>
+<div id="root"></div>
+<script type="module" src="/src/web/main-web.tsx"></script>
+</body>
+</html>
