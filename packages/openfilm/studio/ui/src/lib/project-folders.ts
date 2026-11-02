@@ -7,6 +7,8 @@
  *   PUT { folderId } /api/projects/:id/folder (null: no folder)
  */
 
+import { isWeb } from '../web/backend.ts';
+
 /** `parentId`: the folder it is in (none, or one that is gone: the top level). */
 export type ProjectFolder = { id: string; name: string; createdAt: number; parentId?: string };
 
@@ -25,6 +27,7 @@ export type ListedProject = {
 export type LibrarySort = 'recent' | 'newest' | 'oldest' | 'duration' | 'title';
 
 async function call<T>(path: string, method = 'GET', json?: unknown): Promise<T> {
+  if (isWeb()) return webFolders<T>(path, method, json as Record<string, unknown> | undefined);
   const res = await fetch(`/api/projects/${path}`, {
     method,
     ...(json === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(json) }),
@@ -32,6 +35,52 @@ async function call<T>(path: string, method = 'GET', json?: unknown): Promise<T>
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(String(body.error ?? `Studio answered ${res.status}`));
   return body as T;
+}
+
+/* The web face's folders: the list's organization kept in localStorage (a web project's folders
+   organize its cards; the projects themselves stay in OPFS). Same shapes as the server's. */
+const FOLDERS_KEY = 'fde2e.film.folders';
+
+const readFolders = (): ProjectFolder[] => {
+  try { return JSON.parse(localStorage.getItem(FOLDERS_KEY) ?? '[]') as ProjectFolder[]; } catch { return []; }
+};
+
+const writeFolders = (folders: ProjectFolder[]) => {
+  try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(folders)); } catch { /* private mode: folders just do not persist */ }
+};
+
+async function webFolders<T>(path: string, method = 'GET', json?: Record<string, unknown>): Promise<T> {
+  const folders = readFolders();
+  if (path === 'folders' && method === 'GET') return { folders } as T;
+  if (path === 'folders' && method === 'POST') {
+    const folder: ProjectFolder = { id: `f-${crypto.randomUUID().slice(0, 8)}`, name: String(json?.name ?? 'New folder'), createdAt: Date.now(), ...(json?.parentId ? { parentId: String(json.parentId) } : {}) };
+    writeFolders([...folders, folder]);
+    return { folder } as T;
+  }
+  const at = path.match(/^folders\/([^/]+)$/);
+  if (at) {
+    const id = decodeURIComponent(at[1]);
+    if (method === 'PATCH') {
+      const next = folders.map((f) => (f.id === id ? { ...f, ...json } as ProjectFolder : f));
+      writeFolders(next);
+      return { folder: next.find((f) => f.id === id) } as T;
+    }
+    if (method === 'DELETE') {
+      const inside = new Set([id, ...folders.filter((f) => folderTrail(folders, f.id).some((up) => up.id === id)).map((f) => f.id)]);
+      writeFolders(folders.filter((f) => !inside.has(f.id)));
+      const { listProjects } = await import('@/web/opfs');
+      const projects = (await listProjects()).filter((p) => inside.has(p.folderId ?? ''));
+      return { projects: projects.map((p) => p.id) } as T;
+    }
+  }
+  const move = path.match(/^([^/]+)\/folder$/);
+  if (move && method === 'PUT') {
+    /* a project filed: the folder lives with the project's record in OPFS's `.film/folder` */
+    const { putFile } = await import('@/web/opfs');
+    await putFile(decodeURIComponent(move[1]), '.film/folder', new Blob([JSON.stringify({ id: json?.folderId ?? null })]));
+    return {} as T;
+  }
+  throw new Error(`no web folder call for ${method} ${path}`);
 }
 
 export const folderApi = {

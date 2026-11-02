@@ -210,6 +210,7 @@ export type HistoryResult<T = Record<string, unknown>> = { ok: true; body: T } |
 
 async function call<T = Record<string, unknown>>(projectId: string, path: string, method = 'GET', json?: unknown): Promise<HistoryResult<T>> {
   try {
+    if (isWeb()) return { ok: false, status: 501, code: null }; // web: history actions wait for the OPFS versions batch (tasks 2.3)
     const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/history${path}`, {
       method,
       ...(json === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(json) }),
@@ -222,13 +223,18 @@ async function call<T = Record<string, unknown>>(projectId: string, path: string
   }
 }
 
+import { isWeb } from '../web/backend.ts';
+
 export const historyApi = {
   preview: (id: string, commit: string) => call<VersionPreview>(id, `/versions/${encodeURIComponent(commit)}/preview`),
+
   load: async (id: string, limit = 50, deleted = false) => {
+    if (isWeb()) return null; // web: versions land with the OPFS history batch (tasks 2.3); the panel shows none yet
     const r = await call(id, `?limit=${limit}${deleted ? '&deleted=1' : ''}`);
     return r.ok ? normalizeHistory(r.body) : null;
   },
   versionFiles: async (id: string, commit: string): Promise<Change[] | null> => {
+    if (isWeb()) return null;
     const r = await call(id, `/versions/${commit}`);
     return r.ok ? changeList(r.body.files) : null;
   },

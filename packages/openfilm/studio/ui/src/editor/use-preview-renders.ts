@@ -5,6 +5,7 @@
  * Anything changed in the project (film.html, a page, a file) and those renders are not played until the server names
  * them for the project as it is now.
  */
+import { isWeb } from '@/web/backend';
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { addHeat, joinStretches, lateStretches, sameStretches, type Heat } from '@/lib/preview-renders';
 import type { PlayedReport, PreviewHandle, PreviewRender } from './Preview';
@@ -52,7 +53,7 @@ export function usePreviewRenders({ projectId, folder, fps, playing, on, film, f
     known.current = [];
     setLate([]);
     setMade([]);
-    if (!on || !(fps > 0)) return undefined;
+    if (!on || !(fps > 0) || isWeb()) return undefined; // web: the preview-cache is a server face; the browser draws previews itself (batch 3)
     let alive = true;
     void fetch(`/api/projects/${encodeURIComponent(projectId)}/preview-cache?fps=${fps}`).then((r) => (r.ok ? r.json() : null), () => null)
       .then((answer: { late?: [number, number][]; ranges?: Made[] } | null) => {
@@ -67,7 +68,7 @@ export function usePreviewRenders({ projectId, folder, fps, playing, on, film, f
   /* the project changed: what was rendered of it is not played until it is named for the project as it is now */
   useEffect(() => { setMade([]); }, [film, files]);
   useEffect(() => {
-    if (!on || playing || !late.length || !(fps > 0)) return undefined;
+    if (!on || playing || !late.length || !(fps > 0) || isWeb()) return undefined;
     let alive = true;
     let timer = 0;
     const ask = async () => {

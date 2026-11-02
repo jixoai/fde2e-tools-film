@@ -8,13 +8,14 @@
  * Revisions are content hashes of the film text (film-doc.mjs `filmRev`), so an edit made against
  * rev R lands only if the film is still at R — the same optimistic-concurrency the server kept.
  */
-import { children, ensureDir, projectDir, readBytes, readText, removeFile, removeTree, root, statFile, walk, writeBytes, writeText } from './fs';
-import { newId, untitled } from './id';
-import { emptyFilmHtml } from './film-template';
-import type { StoreEvent, StoreFile, StoreListing, StoreListener, StoreProject } from './types';
+import { children, ensureDir, projectDir, readBytes, readText, removeFile, removeTree, root, statFile, walk, writeBytes, writeText } from './fs.ts';
+import { newId, untitled } from './id.ts';
+import { emptyFilmHtml } from './film-template.ts';
+import type { StoreEvent, StoreFile, StoreListing, StoreListener, StoreProject } from './types.ts';
 
 const STATE = '.film';
 const STATE_ID = 'id';
+const STATE_NAME = 'name';
 const STATE_OPENED = 'opened';
 const STATE_COVER = 'cover.ts';
 const FILM = 'film.html';
@@ -55,14 +56,21 @@ async function describe(dir: FileSystemDirectoryHandle, id: string): Promise<Sto
   const text = await readText(dir, FILM);
   const opened = Number((await readText(dir, STATE, STATE_OPENED))?.trim()) || 0;
   const cover = Number((await readText(dir, STATE, STATE_COVER))?.trim()) || 0;
+  let folderId: string | undefined;
+  try {
+    const filed = await readText(dir, STATE, 'folder');
+    folderId = filed ? ((JSON.parse(filed).id as string | null) ?? undefined) : undefined;
+  } catch { /* unfiled */ }
+  const shown = (await readText(dir, STATE, STATE_NAME))?.trim() || 'Untitled';
   return {
     id,
-    name: dir.name,
+    name: shown,
     openedAt: opened,
     createdAt: opened, // a web project is born opened; the list's `newest` order uses it
     missing: text === null,
     missingReason: text === null ? 'film' : undefined,
     ...(cover ? { cover } : {}),
+    ...(folderId ? { folderId } : {}),
   };
 }
 
@@ -91,15 +99,17 @@ export async function getProject(id: string): Promise<StoreProject | null> {
 /** A new project: `projects/<id>/` with film.html, `.film/` and an empty `assets/`. */
 export async function createProject(name?: string): Promise<StoreProject> {
   const id = newId();
-  const dir = await projectDir(id, true);
+  /* the folder's name IS the id — the one key every reader (URL, events, rename) uses; the name a
+     person sees lives beside it (.film/name) and follows renameProject */
+  const dir = (await projectDir(id, true))!;
   const all = await listProjects();
-  const finalName = name?.trim() || untitled(new Set(all.map((p) => p.name)));
+  const shown = name?.trim().replace(/[/\\:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() || untitled(new Set(all.map((p) => p.name)));
   const now = String(Date.now());
   await writeState(dir, STATE_ID, id);
+  await writeState(dir, STATE_NAME, shown);
   await writeState(dir, STATE_OPENED, now);
   await writeText(dir, emptyFilmHtml(), FILM);
   await ensureDir(dir, [ASSETS]);
-  void finalName;
   return (await describe(dir, id))!;
 }
 
@@ -141,37 +151,16 @@ export async function deleteProject(id: string): Promise<void> {
   tell({ type: 'gone' });
 }
 
-/** A project renamed (its folder's name is what shows; the id stays). */
+/** A project renamed (the name a person sees; the folder — the id — stays). */
 export async function renameProject(id: string, name: string): Promise<StoreProject | null> {
-  const base = await root();
   const dir = await projectDir(id);
   if (!dir) return null;
-  const clean = name.trim().replace(/[/\\:*?"<>|]/g, ' ').replace(/\s+/g, ' ').slice(0, 120) || dir.name;
-  if (clean === dir.name) return describe(dir, id);
-  // OPFS has no rename: a folder moves by copying its files over
-  const target = await base.getDirectoryHandle(clean, { create: true });
-  await copyInto(dir, target);
-  await removeTree(base, id);
-  const moved = await readId(target);
+  const clean = name.trim().replace(/[/\\:*?"<>|]/g, ' ').replace(/\s+/g, ' ').slice(0, 120) || 'Untitled';
+  await writeState(dir, STATE_NAME, clean);
   tell({ type: 'project' });
-  return moved === id ? describe(target, id) : null;
+  return describe(dir, id);
 }
 
-async function copyInto(from: FileSystemDirectoryHandle, to: FileSystemDirectoryHandle): Promise<void> {
-  const { files, folders } = await children(from);
-  for (const file of files) {
-    const src = await from.getFileHandle(file, { create: false });
-    const data = await src.getFile();
-    const dest = await to.getFileHandle(file, { create: true });
-    const writable = await dest.createWritable();
-    await writable.write(await data.arrayBuffer());
-    await writable.close();
-  }
-  for (const folder of folders) {
-    const next = await to.getDirectoryHandle(folder, { create: true });
-    await copyInto(await from.getDirectoryHandle(folder, { create: false }), next);
-  }
-}
 
 /** Opened now: the list's `recent` order follows it. */
 export async function markOpened(id: string): Promise<void> {

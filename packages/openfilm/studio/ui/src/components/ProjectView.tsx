@@ -371,7 +371,7 @@ export function ProjectView({ projectId, onProject, onLeave }: {
   }, []);
   React.useEffect(() => { if (prefsTick) preview.current?.reload?.(); }, [prefsTick]);
   React.useEffect(() => {
-    if (!rawListing) return undefined;
+    if (!rawListing || isWeb()) return undefined; // proxies are a server face (batch 3's media pipeline); the web plays originals
     let alive = true;
     let timer = 0;
     let before: Record<string, MediaProxy> | null = null;
@@ -599,7 +599,7 @@ export function ProjectView({ projectId, onProject, onLeave }: {
   const seekWhenLonger = React.useRef<number | null>(null);
   const onInfo = React.useCallback((next: FilmInfo) => {
     setInfo(next);
-    if (loaded) player.current.load(new URL(loaded.folder).origin, next.sounds, next.duration);
+    if (loaded) player.current.load(new URL(loaded.folder, window.location.origin).origin, next.sounds, next.duration);
     const want = seekWhenLonger.current;
     if (want != null && next.duration * 1000 >= want - 1) { seekWhenLonger.current = null; seek(want); }
   }, [loaded, seek]);

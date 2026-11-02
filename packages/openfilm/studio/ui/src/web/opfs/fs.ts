@@ -19,9 +19,14 @@ export function root(): Promise<FileSystemDirectoryHandle> {
   return rootPromise;
 }
 
-/** A project's directory under `projects/`. */
-export async function projectDir(id: string, create = false): Promise<FileSystemDirectoryHandle> {
-  return (await root()).getDirectoryHandle(id, { create });
+/** A project's directory under `projects/`; null when it is not there. */
+export async function projectDir(id: string, create = false): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    return await (await root()).getDirectoryHandle(id, { create });
+  } catch (e) {
+    if (create) throw e; // creating one that cannot be made is a real failure
+    return null;
+  }
 }
 
 /** Walk to a nested directory; null when any part is missing. */
@@ -58,8 +63,9 @@ export async function readBytes(dir: FileSystemDirectoryHandle, ...parts: string
 
 async function readFileHandle(dir: FileSystemDirectoryHandle, parts: string[]): Promise<FileSystemFileHandle | null> {
   if (!parts.length) return null;
-  const [name, ...rest] = parts;
-  const parent = rest.length ? await walk(dir, rest) : dir;
+  /* the last part is the file; the ones before it are its folders (`readText(dir, '.film', 'id')`) */
+  const name = parts[parts.length - 1];
+  const parent = parts.length > 1 ? await walk(dir, parts.slice(0, -1)) : dir;
   if (!parent) return null;
   try {
     return await parent.getFileHandle(name, { create: false });

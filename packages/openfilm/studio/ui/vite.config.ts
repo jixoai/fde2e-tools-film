@@ -19,6 +19,7 @@ export default defineConfig({
       input: {
         index: fileURLToPath(new URL('./index.html', import.meta.url)),
         'index-web': fileURLToPath(new URL('./index-web.html', import.meta.url)),
+        /* the web face's file server: answers /wf/<id>/… from OPFS (see src/web/opfs/sw.ts) */
       },
     },
   },

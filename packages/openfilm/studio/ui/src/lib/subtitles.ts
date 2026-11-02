@@ -153,6 +153,9 @@ export function writeLastSubtitleStyle(style: SubtitleStyle): void {
 
 /* ── Studio's API (studio/server/captions.mjs) ───────────────────────────── */
 
+import { isWeb } from '../web/backend.ts';
+import * as store from '../web/opfs/index.ts';
+
 /** The film's subtitles as the server works them out (`GET /api/projects/:id/captions`). */
 export type FilmCaptions = {
   cues: SubtitleCue[];
@@ -169,7 +172,12 @@ export type SubtitleTranslateResult = { ok: boolean; error?: string; needsTransl
 
 const subtitlesApi = (projectId: string, rest: string) => `/api/projects/${encodeURIComponent(projectId)}/${rest}`;
 
+/* the web face: captions are worked out of the film by the server; a web project has none until
+   the browser-side caption batch (tracked in tasks). Style is a per-project setting beside the film. */
+const EMPTY_CAPTIONS = (): FilmCaptions => ({ cues: [], sourceLanguage: null, languages: [], untranscribed: [] });
+
 export async function fetchFilmCaptions(projectId: string, signal?: AbortSignal): Promise<FilmCaptions> {
+  if (isWeb()) return EMPTY_CAPTIONS();
   const res = await fetch(subtitlesApi(projectId, 'captions'), { signal });
   if (!res.ok) throw new Error(`Studio answered ${res.status}`);
   return await res.json() as FilmCaptions;
@@ -177,6 +185,10 @@ export async function fetchFilmCaptions(projectId: string, signal?: AbortSignal)
 
 /** The project's style, or null when it was never changed. */
 export async function fetchSubtitleStyle(projectId: string, signal?: AbortSignal): Promise<SubtitleStyle | null> {
+  if (isWeb()) {
+    const raw = await store.readFileText(projectId, '.film/subtitle-style.json');
+    return raw ? parseFilmSubtitleStyle(JSON.parse(raw)) : null;
+  }
   const res = await fetch(subtitlesApi(projectId, 'subtitles'), { signal });
   if (!res.ok) throw new Error(`Studio answered ${res.status}`);
   const body = await res.json() as { style: unknown };
@@ -184,6 +196,10 @@ export async function fetchSubtitleStyle(projectId: string, signal?: AbortSignal
 }
 
 export async function saveSubtitleStyle(projectId: string, style: SubtitleStyle): Promise<void> {
+  if (isWeb()) {
+    await store.putFile(projectId, '.film/subtitle-style.json', new Blob([JSON.stringify(style)]));
+    return;
+  }
   const res = await fetch(subtitlesApi(projectId, 'subtitles'), {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ style }),
   });

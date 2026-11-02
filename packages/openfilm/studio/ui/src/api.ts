@@ -125,7 +125,9 @@ export const api = {
   projects: (): Promise<Project[]> => isWeb()
     ? store.listProjects().then((all) => all.map(asProject))
     : call<{ projects: Project[] }>('projects').then((r) => r.projects),
-  prefs: () => call<StudioPrefs>('prefs'),
+  prefs: (): Promise<StudioPrefs> => (isWeb()
+    ? Promise.resolve({ proxies: { on: false, height: 720 }, seenVersion: null, projectsFolder: null, keys: {}, autoVersions: false })
+    : call<StudioPrefs>('prefs')),
   /** where new projects and exports go, and the free space there */
   locations: () => call<StudioLocations>('locations'),
   /** move the library to `path` (null: the default); with `move`, its projects go too (those that could not are in `failed`) */
@@ -174,7 +176,9 @@ export const api = {
         const read = readFilmFile(text);
         return {
           project: asProject(project),
-          folder: id,
+          /* the web file server's route to this project (Preview loads `folder + 'film.html'`,
+             the player resolves media against it); trailing slash: the frame src concatenates */
+          folder: isWeb() ? `/wf/${id}/` : id,
           text,
           rev,
           value: read.doc ? read.value : null,
@@ -327,6 +331,21 @@ export type FolderEvent = { type: 'film'; rev: string } | { type: 'files'; paths
  * `openfilm open` opens a browser when no page is (a tab behind others, a minimized window).
  */
 export function listen(path: string, on: (event: FolderEvent) => void, { onBack, watch = false, gone }: { onBack?: () => void; watch?: boolean; gone?: () => Promise<boolean> } = {}): () => void {
+  /* the web face has no server to lose: the stream is quiet, the connection always up. Project
+     events reach the page through the store's BroadcastChannel (src/web/opfs subscribe). */
+  if (isWeb()) {
+    if (watch) setConnection('up');
+    const stopStore = on.length
+      ? store.subscribe((event) => {
+        if (event.type === 'project') {
+          if (event.project) on({ type: 'project', project: asProject(event.project) });
+          return;
+        }
+        on(event);
+      })
+      : () => {};
+    return stopStore;
+  }
   const inSight = () => document.visibilityState === 'visible';
   const url = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/${path}${watch ? `?visible=${inSight() ? 1 : 0}` : ''}`;
   const tell = () => { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ visible: inSight() })); };
@@ -335,12 +354,12 @@ export function listen(path: string, on: (event: FolderEvent) => void, { onBack,
   let stopped = false, lost = false, tries = 0;
   let again: ReturnType<typeof setTimeout> | null = null;
   const watcher = watch ? watchConnection() : null;
-  if (watch) studioVersion ??= watchStudioVersion({
+  if (watch && !isWeb()) studioVersion ??= watchStudioVersion({
     version: () => fetch('/api/health', { cache: 'no-store' }).then((r) => r.json()).then((h) => (typeof h?.version === 'string' ? h.version : null)),
     idle: () => writing === 0,
     reload: () => location.reload(),
     storage: (() => { try { return sessionStorage; } catch { return null; } })(),
-  });
+  }); // web: no server version to watch (the page ships whole with the site)
   const connect = () => {
     const s = new WebSocket(url());
     socket = s;

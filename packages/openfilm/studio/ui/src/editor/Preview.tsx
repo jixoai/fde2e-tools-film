@@ -109,7 +109,10 @@ const HOLD_POLL_MS = 100;
 
 export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ folder, stage, time, fps, onInfo, onKey, onError, onPlayed, onSpans, children }, ref) {
   const t = useT();
-  const origin = new URL(folder).origin;
+  /* the folder is a project path on the server face and an OPFS id on the web face; the frames are
+     always served same-origin, so the target origin is this page's either way (the server face's
+     folder is itself under this origin) */
+  const origin = window.location.origin;
   const [frames, setFrames] = useState<Frame[]>([{ key: 1, ready: false }]);
   const elements = useRef(new Map<number, HTMLIFrameElement>());
   const seq = useRef(0);

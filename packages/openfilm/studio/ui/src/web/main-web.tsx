@@ -13,4 +13,9 @@ import { applyStudioHost } from '../lib/host';
 window.filmWeb = true;
 applyStudioHost();
 
+// the web file server: /wf/<id>/… answered from OPFS (film pages, media, covers load as URLs)
+if ('serviceWorker' in navigator) {
+  void navigator.serviceWorker.register('/opfs-sw.js');
+}
+
 createRoot(document.getElementById('root')!).render(<StrictMode><FocusNav /><App /></StrictMode>);

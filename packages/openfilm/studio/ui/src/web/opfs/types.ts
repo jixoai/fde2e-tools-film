@@ -25,6 +25,8 @@ export type StoreProject = {
   missingReason?: 'folder' | 'film';
   /** set when the person picks a cover of their own */
   cover?: number;
+  /** the folder of the list it is filed in (undefined: the top level) */
+  folderId?: string;
 };
 
 /** A file of a project's assets/ (and its pages). */
@@ -39,6 +41,13 @@ export type StoreFile = {
 export type StoreListing = { files: StoreFile[]; folders: string[]; pages: { path: string; size: number; mtime: number }[] };
 
 /** The events a store tells (api.ts `FolderEvent`'s web subset): the UI hears these instead of a WebSocket. */
-export type StoreEvent = { type: 'film'; rev: string } | { type: 'files'; paths?: string[] } | { type: 'history' } | { type: 'project' } | { type: 'gone' } | { type: 'film-missing' };
+export type StoreEvent =
+  | { type: 'film'; rev: string }
+  | { type: 'files'; paths?: string[] }
+  | { type: 'history' }
+  /** the project changed (opened, renamed, a cover set); `project` when the teller had it at hand */
+  | { type: 'project'; project?: StoreProject }
+  | { type: 'gone' }
+  | { type: 'film-missing' };
 
 export type StoreListener = (event: StoreEvent) => void;
