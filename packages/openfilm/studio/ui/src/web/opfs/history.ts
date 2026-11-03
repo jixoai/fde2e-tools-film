@@ -177,9 +177,12 @@ export async function versionFilm(id: string, commit: string): Promise<string | 
   return readStoreText(id, `${VDIR}/${commit}/${FILM}`);
 }
 
-/** Records move to the deleted list; the snapshots stay, so a record can come back whole. */
+/** Records move to the deleted list; the snapshots stay, so a record can come back whole.
+    Head is refused (the server face's 'current'): it is what the folder is checked out as. */
 export async function deleteVersions(id: string, commits: string[]): Promise<string[]> {
-  const versions = await readIndex(id);
+  const versions = (await readIndex(id)).sort((a, b) => b.at - a.at);
+  const head = versions[0]?.commit;
+  if (head && commits.includes(head)) throw new Error('the version currently in use cannot be deleted');
   const deleted = await readDeleted(id);
   const done: string[] = [];
   const left: WVersion[] = [];

@@ -250,6 +250,13 @@ export async function readFileBytes(id: string, path: string): Promise<ArrayBuff
   return readBytes(dir, ...path.split('/'));
 }
 
+/** A history action done elsewhere (the versions tree, src/web/opfs/history.ts): the same event
+    the server face's watcher tells ({ moved }: the folder's files changed, so the editor re-reads).
+    history.ts cannot import this file (store ← history cycle), so the wiring layer calls it. */
+export function tellHistory(moved: boolean): void {
+  tell({ type: 'history', ...(moved ? { moved: true } : {}) });
+}
+
 /** A file put into the project (a dropped or pasted one). */
 export async function putFile(id: string, path: string, data: Blob | ArrayBuffer): Promise<void> {
   const dir = await projectDir(id);

@@ -231,11 +231,28 @@ const opfs = async (): Promise<typeof OpfsHistory> => {
   opfsHistory ??= await import('../web/opfs/history.ts');
   return opfsHistory;
 };
+/** The store's history event ({ moved }: the folder's files changed, so the editor re-reads) —
+    told through the store's own tell (listeners + BroadcastChannel); history.ts cannot import
+    store.ts (cycle), so the wiring layer says it. */
+const tellHistory = async (moved: boolean) => {
+  const { tellHistory: tell } = await import('../web/opfs/index.ts');
+  tell(moved);
+};
 const webLoadHistory = (id: string) => opfs().then((h) => h.loadHistory(id));
 const webDiffers = (id: string) => opfs().then((h) => h.workingDiffers(id));
-const webSaveVersion = (id: string, name: string) => opfs().then((h) => h.saveVersion(id, name));
-const webDiscard = (id: string) => opfs().then((h) => h.discardChanges(id));
-const webCheckout = (id: string, commit: string) => opfs().then((h) => h.checkoutVersion(id, commit));
+const webSaveVersion = async (id: string, name: string) => {
+  const commit = await opfs().then((h) => h.saveVersion(id, name));
+  await tellHistory(false); // the index moved; the folder's files did not
+  return commit;
+};
+const webDiscard = async (id: string) => {
+  await opfs().then((h) => h.discardChanges(id));
+  await tellHistory(true); // the folder's files changed: the editor re-reads
+};
+const webCheckout = async (id: string, commit: string) => {
+  await opfs().then((h) => h.checkoutVersion(id, commit));
+  await tellHistory(true);
+};
 const webRestoreFilm = async (id: string, commit: string) => {
   const h = await opfs();
   const film = await h.versionFilm(id, commit);
@@ -243,8 +260,23 @@ const webRestoreFilm = async (id: string, commit: string) => {
   const { writeFilm } = await import('../web/opfs/index.ts');
   await writeFilm(id, film, null);
 };
-const webDeleteVersions = (id: string, commits: string[]) => opfs().then((h) => h.deleteVersions(id, commits));
-const webRecoverVersions = (id: string, commits: string[]) => opfs().then((h) => h.recoverVersions(id, commits));
+const webDeleteVersions = async (id: string, commits: string[]) => {
+  let done: string[];
+  try {
+    done = await opfs().then((h) => h.deleteVersions(id, commits));
+  } catch (e) {
+    /* head refused (the server face's 'current'): the panel says it in its own words */
+    if (e instanceof Error && /currently in use/.test(e.message)) return { ok: false as const, status: 409, code: 'current' };
+    throw e;
+  }
+  await tellHistory(false);
+  return { ok: true as const, body: { commits: done } };
+};
+const webRecoverVersions = async (id: string, commits: string[]) => {
+  const done = await opfs().then((h) => h.recoverVersions(id, commits));
+  await tellHistory(false);
+  return { ok: true as const, body: { commits: done } };
+};
 const webLoadDeleted = (id: string) => opfs().then((h) => h.loadDeleted(id));
 
 const webPreview = async (id: string, commit: string): Promise<VersionPreview> => {
@@ -278,12 +310,12 @@ export const historyApi = {
   /** film.html missing: only it put back, as the version has it; the other files are left as they are */
   restoreFilm: (id: string, commit: string) => call<{ commit: string }>(id, '/film', 'POST', { commit }),
   copy: (id: string, commit: string, name: string) => call<{ project: { id: string; name: string }; missing?: string[] }>(id, '/copy', 'POST', { commit, name }),
-  delete: async (id: string, commits: string[]) => {
-    if (isWeb()) return { ok: true as const, body: { commits: await webDeleteVersions(id, commits) } };
+  delete: (id: string, commits: string[]) => {
+    if (isWeb()) return webDeleteVersions(id, commits);
     return call<{ commits: string[] }>(id, '/delete', 'POST', { commits });
   },
-  recover: async (id: string, commits: string[]) => {
-    if (isWeb()) return { ok: true as const, body: { commits: await webRecoverVersions(id, commits) } };
+  recover: (id: string, commits: string[]) => {
+    if (isWeb()) return webRecoverVersions(id, commits);
     return call<{ commits: string[] }>(id, '/recover', 'POST', { commits });
   },
 };
@@ -319,6 +351,7 @@ async function webHistory<T>(projectId: string, path: string, method: string, js
 async function webLoad(id: string): Promise<HistoryState | null> {
   const h = await webLoadHistory(id);
   const differs = await webDiffers(id);
+  const { count } = await webLoadDeleted(id);
   return {
     status: {
       head: h.head || null,
@@ -328,7 +361,7 @@ async function webLoad(id: string): Promise<HistoryState | null> {
     },
     versions: h.versions.map((v) => ({ commit: v.commit, parents: [], at: v.at, kind: 'named' as const, name: v.name, restored: null })),
     more: false,
-    deletedCount: 0,
+    deletedCount: count,
   };
 }
 
