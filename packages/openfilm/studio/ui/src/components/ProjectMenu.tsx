@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckSquare, FolderInput, FolderOpen, FolderSearch, HardDriveDownload, Image, ImageOff, ImagePlus, ListX, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { CheckSquare, Download, FolderInput, FolderOpen, FolderSearch, HardDriveDownload, Image, ImageOff, ImagePlus, ListX, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { ContextMenu, type ContextMenuEntry } from './ContextMenu';
 import { Tooltip } from './Tooltip';
 import { useT } from '@/i18n';
@@ -26,6 +26,7 @@ export function ProjectMenu({
   onLocate,
   onRemove,
   onSaveBack,
+  onDownloadPackage,
   onDelete,
   size = 18,
   className,
@@ -51,6 +52,8 @@ export function ProjectMenu({
   onRemove?: () => void;
   /** Web face's 存回真实文件夹: the project package into a folder of the person's disk (FSA). */
   onSaveBack?: () => void;
+  /** Web face's 项目包下载 (interchange): the whole project as one .zip. */
+  onDownloadPackage?: () => void;
   onDelete?: () => void;
   size?: number;
   className?: string;
@@ -79,6 +82,7 @@ export function ProjectMenu({
   add('coverReset', <ImageOff size={15} />, t('projects.restoreCover'), onRestoreCover);
   add('reveal', <FolderOpen size={15} />, t('projects.revealFolder'), onReveal);
   add('saveBack', <HardDriveDownload size={15} />, t('projects.saveBack'), onSaveBack);
+  add('downloadPackage', <Download size={15} />, t('projects.downloadPackage'), onDownloadPackage);
   add('locate', <FolderSearch size={15} />, t('projects.locate'), onLocate);
   add('remove', <ListX size={15} />, t('projects.removeFromList'), onRemove);
   if (onDelete) {

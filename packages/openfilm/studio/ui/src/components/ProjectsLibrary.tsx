@@ -25,6 +25,7 @@ import { useT } from '@/i18n';
 import { folderApi, folderCounts, folderTrail, newProjectIn, type ProjectFolder } from '@/lib/project-folders';
 import { stillThere } from '@/lib/project-delete';
 import { importFilmText, looksLikeFilmHtml, nameFromFile } from '../web/import';
+import { buildPackage, importPackage, looksLikePackage, unzipEntries, zipEntries } from '../web/interchange';
 import { studioHost } from '@/lib/host';
 import { SourceError, sourcesApi } from '@/lib/project-sources';
 import { LIST_WAIT_MS, within } from '@/lib/projects-page';
@@ -420,6 +421,37 @@ export function ProjectsPopover({
     go(project.id, 'opening');
   }
 
+  /** 项目包下载 (interchange): the whole project as one .zip, saved by the browser. */
+  async function downloadPackage(projectId: string) {
+    try {
+      const { name, entries } = await buildPackage(projectId);
+      const blob = new Blob([zipEntries(entries)], { type: 'application/zip' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${name}.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      lib.flash(t('projects.packageDownloaded').replace('{name}', name));
+    } catch (e) {
+      lib.flash(t('projects.packageFailed').replace('{error}', message(e)));
+    }
+  }
+
+  /** A project package (.zip, interchange) picked or dropped: verified whole, then a project.
+      Anything off is said as it is; nothing partial lands. */
+  async function importPackageFile(file: File) {
+    setBusy('creating');
+    try {
+      const entries = await unzipEntries(await file.arrayBuffer());
+      const project = await importPackage(entries);
+      go(project.id, 'creating');
+    } catch (e) {
+      setBusy(null);
+      lib.reload();
+      lib.flash(t('projects.packageFailed').replace('{error}', message(e)));
+    }
+  }
+
   /** A project whose folder is gone, pointed at the folder it is in now: the app's dialog, else Studio's browser. */
   async function locate(project: LibraryProject) {
     if (!studioHost?.folders) { setBrowser({ mode: 'locate', project }); return; }
@@ -452,6 +484,11 @@ export function ProjectsPopover({
   };
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    const packageFile = [...e.dataTransfer.files].find(looksLikePackage);
+    if (isWeb() && packageFile) {
+      void importPackageFile(packageFile);
+      return;
+    }
     const file = [...e.dataTransfer.files].find((f) => /\.html?$/i.test(f.name) || f.type === 'text/html');
     if (isWeb() && file) {
       setBusy('creating');
@@ -522,6 +559,8 @@ export function ProjectsPopover({
               onNewProject={(folderId) => void newProject(folderId)}
               onOpenFolder={() => void openFolder()}
               onGetFromGitHub={() => setGithub({})}
+              onImportPackage={isWeb() ? (file) => void importPackageFile(file) : undefined}
+              onDownloadPackage={isWeb() ? (project) => void downloadPackage(project.id) : undefined}
               onLocate={(project) => void locate(project)}
               /* presence is checked again before opening the editor */
               onOpen={(project) => { void openListed(project); }}

@@ -7,7 +7,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import {
-  ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Folder, FolderInput, FolderOpen, FolderPlus, FolderSearch, Github, LayoutGrid, List, MoreHorizontal, Pencil, Plus, Search, SlidersHorizontal, Trash2, Video, X,
+  ArrowLeft, Check, ChevronDown, ChevronRight, Clock3, Folder, FolderInput, FolderOpen, FolderPlus, FolderSearch, Github, LayoutGrid, List, Package, MoreHorizontal, Pencil, Plus, Search, SlidersHorizontal, Trash2, Video, X,
 } from 'lucide-react';
 import type { Example } from '@/lib/project-sources';
 import { ExamplesSection } from './ProjectSources';
@@ -50,6 +50,8 @@ export function ProjectsView({
   onMoveToFolder,
   onMoveFolder,
   onSaveBack,
+  onImportPackage,
+  onDownloadPackage,
   onClose,
   heading,
 }: {
@@ -90,6 +92,11 @@ export function ProjectsView({
   /** Web face's 存回真实文件夹 (FSA): the project package into a folder of the person's disk.
       Passed only where it exists (the web face + a browser with the API); absent: no menu item. */
   onSaveBack?: (project: LibraryProject) => void;
+  /** Web face's 项目包进站 (interchange): a picked .zip verified and made a project. Absent: the
+      Import menu has no package item (the server face opens folders instead). */
+  onImportPackage?: (file: File) => void;
+  /** Web face's 项目包下载 (interchange): the project as one .zip. Absent: no menu item. */
+  onDownloadPackage?: (project: LibraryProject) => void;
   /** Missing: no close button (Studio has no project to go back to). */
   onClose?: () => void;
   /** The title row's left, in place of "Projects" (the launcher's switch between the projects and the examples). */
@@ -238,6 +245,7 @@ export function ProjectsView({
       onLocate: () => onLocate(project),
       onDelete: () => onDelete([project.id]),
       onSaveBack: onSaveBack ? () => onSaveBack(project) : undefined,
+      onDownloadPackage: onDownloadPackage ? () => onDownloadPackage(project) : undefined,
     };
   }
 
@@ -317,13 +325,13 @@ export function ProjectsView({
             </div>
           ) : view === 'cards' ? (
             <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4">
-              {showNew ? <NewProjectCard creating={creating} onNewProject={() => onNewProject(folderId)} {...(folderId === null ? { onOpenFolder, onGetFromGitHub } : {})} /> : null}
+              {showNew ? <NewProjectCard creating={creating} onNewProject={() => onNewProject(folderId)} {...(folderId === null ? { onOpenFolder, onGetFromGitHub, onImportPackage } : {})} /> : null}
               {showFolders ? levelFolders.map((folder) => <FolderCard key={`folder:${folder.id}`} {...folderProps(folder)} />) : null}
               {visible.map((project) => <ProjectCard key={project.id} {...itemProps(project)} />)}
             </div>
           ) : (
             <div className="flex flex-col divide-y divide-[var(--border)]">
-              {showNew ? <NewProjectListRow creating={creating} onNewProject={() => onNewProject(folderId)} {...(folderId === null ? { onOpenFolder, onGetFromGitHub } : {})} /> : null}
+              {showNew ? <NewProjectListRow creating={creating} onNewProject={() => onNewProject(folderId)} {...(folderId === null ? { onOpenFolder, onGetFromGitHub, onImportPackage } : {})} /> : null}
               {showFolders ? levelFolders.map((folder) => <FolderListRow key={`folder:${folder.id}`} {...folderProps(folder)} />) : null}
               {visible.map((project) => <ProjectListRow key={project.id} {...itemProps(project)} />)}
             </div>
@@ -413,6 +421,7 @@ interface ItemProps {
   onLocate: () => void;
   onDelete: () => void;
   onSaveBack?: () => void;
+  onDownloadPackage?: () => void;
 }
 
 function SelectionCheck({ selected }: { selected: boolean }) {
@@ -560,7 +569,7 @@ type NewProjectProps = {
 };
 
 /** The grid's first cell: start a new project, card-sized, so "new ones start here" reads at a glance. */
-function NewProjectCard({ creating, onNewProject, onOpenFolder, onGetFromGitHub }: NewProjectProps) {
+function NewProjectCard({ creating, onNewProject, onOpenFolder, onGetFromGitHub, onImportPackage }: NewProjectProps & { onImportPackage?: (file: File) => void }) {
   const t = useT();
   return (
     <article className="group min-w-0">
@@ -578,14 +587,14 @@ function NewProjectCard({ creating, onNewProject, onOpenFolder, onGetFromGitHub 
       </button>
       {/* where the other cards have their name: starting from a film that exists */}
       <div className="mt-2 flex">
-        {onOpenFolder && onGetFromGitHub ? <ImportMenu creating={creating} onOpenFolder={onOpenFolder} onGetFromGitHub={onGetFromGitHub} className="-ml-1.5 h-7 px-1.5 text-[12.5px]" /> : null}
+{onOpenFolder && onGetFromGitHub ? <ImportMenu creating={creating} onOpenFolder={onOpenFolder} onGetFromGitHub={onGetFromGitHub} onImportPackage={onImportPackage} className="-ml-1.5 h-7 px-1.5 text-[12.5px]" /> : null}
       </div>
     </article>
   );
 }
 
 /** "New project" in the list view: the same entries, as a row. */
-function NewProjectListRow({ creating, onNewProject, onOpenFolder, onGetFromGitHub }: NewProjectProps) {
+function NewProjectListRow({ creating, onNewProject, onOpenFolder, onGetFromGitHub, onImportPackage }: NewProjectProps & { onImportPackage?: (file: File) => void }) {
   const t = useT();
   return (
     <article className="group flex min-w-0 items-center gap-3 py-4 sm:gap-4">
@@ -611,13 +620,14 @@ function NewProjectListRow({ creating, onNewProject, onOpenFolder, onGetFromGitH
           {t('projects.newProject')}
         </button>
       </div>
-      {onOpenFolder && onGetFromGitHub ? <ImportMenu creating={creating} onOpenFolder={onOpenFolder} onGetFromGitHub={onGetFromGitHub} className="h-8 px-2.5 text-[12.5px]" /> : null}
+{onOpenFolder && onGetFromGitHub ? <ImportMenu creating={creating} onOpenFolder={onOpenFolder} onGetFromGitHub={onGetFromGitHub} onImportPackage={onImportPackage} className="h-8 px-2.5 text-[12.5px]" /> : null}
     </article>
   );
 }
 
 /** "Import from ⌄": the ways to start from a film that exists, a folder on this computer or a repository on GitHub. */
-function ImportMenu({ creating, onOpenFolder, onGetFromGitHub, className }: Required<Omit<NewProjectProps, 'onNewProject'>> & { className: string }) {
+function ImportMenu({ creating, onOpenFolder, onGetFromGitHub, onImportPackage, className }: Required<Omit<NewProjectProps, 'onNewProject'>> & { className: string } & { onImportPackage?: (file: File) => void }) {
+  const pick = React.useRef<HTMLInputElement>(null);
   const t = useT();
   const [anchor, setAnchor] = React.useState<{ x: number; y: number; top: number } | null>(null);
   const button = React.useRef<HTMLButtonElement>(null);
@@ -648,7 +658,21 @@ function ImportMenu({ creating, onOpenFolder, onGetFromGitHub, className }: Requ
           items={[
             { id: 'folder', icon: <FolderOpen size={14} />, label: t('projects.openFolder'), onSelect: onOpenFolder },
             { id: 'github', icon: <Github size={14} />, label: t('projects.getFromGitHub'), onSelect: onGetFromGitHub },
+            ...(onImportPackage ? [{ id: 'package', icon: <Package size={14} />, label: t('projects.importPackage'), onSelect: () => pick.current?.click() }] : []),
           ]}
+        />
+      ) : null}
+      {onImportPackage ? (
+        <input
+          ref={pick}
+          type="file"
+          accept=".zip,application/zip"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onImportPackage(file);
+            e.target.value = '';
+          }}
         />
       ) : null}
     </>
@@ -671,6 +695,7 @@ function ProjectCard({
   onLocate,
   onDelete,
   onSaveBack,
+  onDownloadPackage,
 }: ItemProps) {
   const t = useT();
   const language = useLanguage();
@@ -724,7 +749,7 @@ function ProjectCard({
             {project.working ? <span className="truncate text-[var(--accent)]">· {t('projects.agentRunning')}</span> : null}
           </button>
         </div>
-        {!selecting ? <ItemMenu project={project} onOpen={onOpen} onStartRename={onStartRename} onStartSelect={onStartSelect} onMoveToFolder={onMoveToFolder} onLocate={onLocate} onDelete={onDelete} onSaveBack={onSaveBack} size={14} /> : null}
+        {!selecting ? <ItemMenu project={project} onOpen={onOpen} onStartRename={onStartRename} onStartSelect={onStartSelect} onMoveToFolder={onMoveToFolder} onLocate={onLocate} onDelete={onDelete} onSaveBack={onSaveBack} onDownloadPackage={onDownloadPackage} size={14} /> : null}
       </div>
     </article>
   );
@@ -769,13 +794,15 @@ function ItemMenu({
   onLocate,
   onDelete,
   onSaveBack,
+  onDownloadPackage,
   size,
-}: Pick<ItemProps, 'project' | 'onOpen' | 'onStartRename' | 'onStartSelect' | 'onMoveToFolder' | 'onLocate' | 'onDelete' | 'onSaveBack'> & { size: number }) {
+}: Pick<ItemProps, 'project' | 'onOpen' | 'onStartRename' | 'onStartSelect' | 'onMoveToFolder' | 'onLocate' | 'onDelete' | 'onSaveBack' | 'onDownloadPackage'> & { size: number }) {
   const cover = React.useContext(ProjectCoverContext);
   if (project.missing) return <ProjectMenu onLocate={onLocate} onRemove={onDelete} size={size} />;
   return (
     <ProjectMenu
       onSaveBack={onSaveBack}
+      onDownloadPackage={onDownloadPackage}
       onRename={onStartRename}
       onSelect={onStartSelect}
       onMoveToFolder={onMoveToFolder}
@@ -805,6 +832,7 @@ function ProjectListRow({
   onLocate,
   onDelete,
   onSaveBack,
+  onDownloadPackage,
 }: ItemProps) {
   const t = useT();
   const language = useLanguage();
@@ -845,7 +873,7 @@ function ProjectListRow({
         </button>
       </div>
       {project.missing && !selecting ? <MissingActions compact reason={project.missingReason} onLocate={onLocate} onRemove={onDelete} /> : null}
-      {!selecting ? <ItemMenu project={project} onOpen={onOpen} onStartRename={onStartRename} onStartSelect={onStartSelect} onMoveToFolder={onMoveToFolder} onLocate={onLocate} onDelete={onDelete} onSaveBack={onSaveBack} size={15} /> : null}
+      {!selecting ? <ItemMenu project={project} onOpen={onOpen} onStartRename={onStartRename} onStartSelect={onStartSelect} onMoveToFolder={onMoveToFolder} onLocate={onLocate} onDelete={onDelete} onSaveBack={onSaveBack} onDownloadPackage={onDownloadPackage} size={15} /> : null}
     </article>
   );
 }

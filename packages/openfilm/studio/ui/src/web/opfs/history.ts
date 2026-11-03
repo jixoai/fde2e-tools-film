@@ -177,6 +177,38 @@ export async function versionFilm(id: string, commit: string): Promise<string | 
   return readStoreText(id, `${VDIR}/${commit}/${FILM}`);
 }
 
+/** A version's snapshot as package entries (interchange.ts reads them): every file it holds,
+    each with its in-package path. Refuses when the version is not there. */
+export async function versionEntries(id: string, commit: string): Promise<Array<{ path: string; bytes: ArrayBuffer }>> {
+  const dir = (await projectDir(id))!;
+  const version = await walk(dir, [VDIR, commit]);
+  if (!version) throw new Error(`no such version: ${commit}`);
+  const out: Array<{ path: string; bytes: ArrayBuffer }> = [];
+  for (const f of (await children(version)).files) {
+    const bytes = await readVersionFile(version, f);
+    if (bytes !== null) out.push({ path: f, bytes });
+  }
+  const assets = await walk(version, ['assets']);
+  if (assets) {
+    for (const p of await collectPaths(assets, 'assets')) {
+      const bytes = await readVersionPath(id, `${VDIR}/${commit}/${p}`);
+      if (bytes !== null) out.push({ path: p, bytes });
+    }
+  }
+  return out;
+}
+
+async function readVersionPath(id: string, path: string): Promise<ArrayBuffer | null> {
+  try {
+    const base = await navigator.storage.getDirectory();
+    let at = await base.getDirectoryHandle('projects', { create: false });
+    at = await at.getDirectoryHandle(id, { create: false });
+    const parts = path.split('/');
+    for (let i = 0; i < parts.length - 1; i++) at = await at.getDirectoryHandle(parts[i]!, { create: false });
+    return await (await (await at.getFileHandle(parts[parts.length - 1]!)).getFile()).arrayBuffer();
+  } catch { return null; }
+}
+
 /** Records move to the deleted list; the snapshots stay, so a record can come back whole.
     Head is refused (the server face's 'current'): it is what the folder is checked out as. */
 export async function deleteVersions(id: string, commits: string[]): Promise<string[]> {

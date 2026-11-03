@@ -5,11 +5,11 @@
  * no further prompts. Advanced and optional: nothing else touches this module, and a browser
  * without the API simply never sees the entry (web/saveBackAvailable).
  *
- * The package shape is the interchange contract's (web-film-interchange): the same manifest the
- * zip download builds. `files` indexes everything but the manifest itself, so a later import can
- * verify what came back; checksums are sha-256 (WebCrypto), the same digest the store's rev uses.
+ * The package shape is the interchange contract's single source (web/interchange.ts): the same
+ * buildPackage the zip download packs and the receiver verifies — one manifest, one checksum set.
  */
-import { getProject, listFiles, readFileBytes, readFilm, filmRev } from './opfs/index.ts';
+import { buildPackage } from './interchange.ts';
+import { getProject, readFilm } from './opfs/index.ts';
 import { children, ensureDir } from './opfs/fs.ts';
 
 export const saveBackAvailable = (): boolean => typeof (window as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function';
@@ -37,47 +37,13 @@ async function write(dir: FileSystemDirectoryHandle, path: string, data: ArrayBu
   await w.close();
 }
 
-async function sha256(data: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-/** The project package into `dir`: manifest, film.html, every asset. Answers the file count.
-    `.film/` (versions, settings) stays in OPFS — the package is the working copy, not the archive. */
+/** The project package into `dir`: manifest, film.html, every asset — the interchange contract's
+    buildPackage, written file by file. Answers the file count. `.film/` (versions, settings) stays
+    in OPFS — the package is the working copy, not the archive. */
 export async function saveProjectBack(id: string, dir: FileSystemDirectoryHandle): Promise<{ files: number; name: string }> {
-  const project = await getProject(id);
-  if (!project) throw new Error('the project is gone');
-  const film = await readFilm(id);
-  if (!film) throw new Error('the project has no film');
-
-  const listing = await listFiles(id);
-  const files: Array<{ path: string; size: number; sha256: string }> = [];
-
-  let bytes = await readFileBytes(id, 'film.html');
-  if (bytes === null) throw new Error('the project has no film');
-  await write(dir, 'film.html', bytes);
-  files.push({ path: 'film.html', size: bytes.byteLength, sha256: await sha256(bytes) });
-
-  let count = 1;
-  for (const f of listing.files) {
-    if (f.path === 'film.html') continue;
-    const data = await readFileBytes(id, f.path);
-    if (data === null) continue;
-    await write(dir, f.path, data);
-    files.push({ path: f.path, size: data.byteLength, sha256: await sha256(data) });
-    count += 1;
-  }
-
-  const manifest = {
-    format: 1 as const,
-    kind: 'fde2e-film-project' as const,
-    name: project.name,
-    savedAt: Date.now(),
-    filmRev: await filmRev(film.text),
-    files,
-  };
-  await write(dir, 'manifest.film.json', JSON.stringify(manifest, null, 1) + '\n');
-  return { files: count, name: project.name };
+  const { name, entries } = await buildPackage(id);
+  for (const e of entries) await write(dir, e.path, e.bytes);
+  return { files: entries.length, name };
 }
 
 /** Whether `dir` already holds a package of this film: its manifest is ours and names the film

@@ -309,7 +309,10 @@ export const historyApi = {
   checkout: (id: string, commit: string, discard = false) => call<{ commit: string; missing?: string[] }>(id, '/checkout', 'POST', { commit, discard }),
   /** film.html missing: only it put back, as the version has it; the other files are left as they are */
   restoreFilm: (id: string, commit: string) => call<{ commit: string }>(id, '/film', 'POST', { commit }),
-  copy: (id: string, commit: string, name: string) => call<{ project: { id: string; name: string }; missing?: string[] }>(id, '/copy', 'POST', { commit, name }),
+  copy: async (id: string, commit: string, name: string) => {
+    if (isWeb()) return webCopyVersion(id, commit, name);
+    return call<{ project: { id: string; name: string }; missing?: string[] }>(id, '/copy', 'POST', { commit, name });
+  },
   delete: (id: string, commits: string[]) => {
     if (isWeb()) return webDeleteVersions(id, commits);
     return call<{ commits: string[] }>(id, '/delete', 'POST', { commits });
@@ -364,6 +367,16 @@ async function webLoad(id: string): Promise<HistoryState | null> {
     deletedCount: count,
   };
 }
+
+/** 「Save as new project」on web: the version snapshot as a package into a new project — the
+    same verify path a dropped zip takes, so a copy is always a verified whole. */
+const webCopyVersion = async (id: string, commit: string, name: string) => {
+  const h = await opfs();
+  const entries = await h.versionEntries(id, commit);
+  const { importVersion } = await import('../web/interchange.ts');
+  const project = await importVersion(entries, name);
+  return { ok: true as const, body: { project: { id: project.id, name: project.name }, missing: [] } };
+};
 
 /** The Deleted view's state, from the web face's deleted records: the same HistoryState shape the
     server answers for `deleted=1`, with the records in the versions slot. */
