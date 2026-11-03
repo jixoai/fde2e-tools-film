@@ -9,6 +9,7 @@ import { App } from '../App';
 import { FocusNav } from '../components/FocusNav';
 import '../globals.css';
 import { applyStudioHost } from '../lib/host';
+import { registerWebMCPTools } from './webmcp-register';
 
 window.filmWeb = true;
 applyStudioHost();
@@ -19,3 +20,10 @@ if ('serviceWorker' in navigator) {
 }
 
 createRoot(document.getElementById('root')!).render(<StrictMode><FocusNav /><App /></StrictMode>);
+
+// The WebMCP tool surface (4.1): the four families once the page can answer them. projects_open
+// navigates the same way the app's own `open` does (the address bar IS the app's router).
+void registerWebMCPTools((id) => {
+  if (location.pathname !== `/projects/${id}`) history.pushState(null, '', `/projects/${id}`);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+});
