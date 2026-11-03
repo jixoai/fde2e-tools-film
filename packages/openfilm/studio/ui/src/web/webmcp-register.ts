@@ -5,6 +5,7 @@
  * the native may refuse duplicates).
  */
 import { ensureModelContext, filmToolDefs, type ModelContextLike, type WebMCPToolDef } from './webmcp.ts';
+import { editFamilyTools } from './webmcp-edit.ts';
 
 export interface RegisterResult {
   /** Whether the environment supports WebMCP at all (native or polyfill). */
@@ -17,7 +18,8 @@ export interface RegisterResult {
 export async function registerWebMCPTools(openProject: (id: string) => void): Promise<RegisterResult> {
   const mc: ModelContextLike | null = await ensureModelContext();
   if (!mc) return { supported: false, registered: [], failures: [] };
-  const defs: WebMCPToolDef[] = filmToolDefs(openProject);
+  /* the edit family's verbs ride beside the four families' tools (4.2, T07) */
+  const defs: WebMCPToolDef[] = [...filmToolDefs(openProject), ...editFamilyTools()];
   const registered: string[] = [];
   const failures: RegisterResult['failures'] = [];
   for (const def of defs) {
