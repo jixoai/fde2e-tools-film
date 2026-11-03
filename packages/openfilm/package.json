@@ -64,6 +64,7 @@
     "typecheck": "tsc -p studio/server && tsc -p studio/ui",
     "build:ui": "node studio/ui/scripts/emit-film-runtime.mjs && vite build --config studio/ui/vite.config.ts",
     "prebuild:ui": "node scripts/vendor-ffmpeg.mjs",
+    "webmcp-check": "node scripts/webmcp-check.mjs",
     "vendor-ffmpeg": "node scripts/vendor-ffmpeg.mjs"
   },
   "devDependencies": {

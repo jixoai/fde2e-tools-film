@@ -176,6 +176,8 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
       annotations: { readOnlyHint: false, consequentialHint: true },
       execute: async ({ id }) => {
         if (typeof id !== 'string' || !id) return say({ error: 'projects_delete needs an id' });
+        const projects = await (await api()).projects();
+        if (!projects.some((p) => p.id === id)) return say({ error: `no such project: ${id}` });
         await (await api()).forget(id);
         return say({ ok: true, deleted: id });
       },
@@ -218,9 +220,9 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
     {
       name: 'produce_render',
       title: 'Render (export video)',
-      description: 'Not yet: the export pump wiring (3.3) feeds 3.4\'s encoder. Present so agents can probe the surface.',
+      description: 'Not yet: the export pump wiring (3.3) feeds 3.4\'s encoder. Present so agents can probe the surface; answers unavailable (read-only until it lands).',
       inputSchema: jsonSchema({}),
-      annotations: { readOnlyHint: false },
+      annotations: { readOnlyHint: true },
       execute: async () => say({ error: 'produce_render lands with the export pump wiring' }),
     },
     {
