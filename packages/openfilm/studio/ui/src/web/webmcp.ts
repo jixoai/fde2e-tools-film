@@ -16,6 +16,9 @@
  * polyfill (GoogleChromeLabs/webmcp-tools, Apache-2.0 — the same copy tools-v0 vendors); failures
  * per tool are recorded, never fatal. Response is always a JSON string.
  */
+import { currentProjectId, jsonSchema, say, type ModelContextLike, type WebMCPToolDef } from './webmcp-kit.ts';
+export type { ModelContextLike, WebMCPToolDef } from './webmcp-kit.ts';
+
 /** The api and friends load lazily: the defs must be inspectable (tests, listing) without the
     app graph, and a tool call is rare enough to pay the dynamic import. */
 type Api = typeof import('../api')['api'];
@@ -24,28 +27,6 @@ const historyApiModule = async () => (await import('../lib/project-history.ts'))
 const lanes = async () => (await import('./capture-lanes.ts')).availableLanes;
 const canEncode = async () => (await import('./encode-backend.ts')).encodeAvailable;
 const canSaveBack = async () => (await import('./save-back.ts')).saveBackAvailable;
-
-
-/** document.modelContext's structural minimum (native or polyfill). */
-export interface ModelContextLike {
-  registerTool: (tool: WebMCPToolDef) => Promise<unknown>;
-  getTools: (options?: Record<string, unknown>) => Promise<Array<{ name: string }>>;
-  executeTool: (tool: unknown, input?: Record<string, unknown>) => Promise<string>;
-}
-
-export interface WebMCPToolDef {
-  name: string;
-  title?: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  execute: (input: Record<string, unknown>, options: { signal: AbortSignal }) => Promise<unknown>;
-  annotations?: {
-    readOnlyHint?: boolean;
-    untrustedContentHint?: boolean;
-    consequentialHint?: boolean;
-    debugging?: boolean;
-  };
-}
 
 /** Native first, else the vendored polyfill's side effect. Null: the environment can't. */
 export async function ensureModelContext(): Promise<ModelContextLike | null> {
@@ -60,19 +41,6 @@ export async function ensureModelContext(): Promise<ModelContextLike | null> {
   }
   return (document as unknown as { modelContext?: ModelContextLike }).modelContext ?? null;
 }
-
-/** A tool's answer, always a JSON string (the polyfill's executeTool returns objects as-is). */
-const say = (value: unknown): string => JSON.stringify(value);
-
-/** The project the page has open (/projects/<id>), or null at the launcher. */
-const currentProjectId = (): string | null => /^\/projects\/([\w-]+)/.exec(location.pathname)?.[1] ?? null;
-
-const jsonSchema = (properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> => ({
-  type: 'object',
-  properties,
-  required,
-  additionalProperties: false,
-});
 
 /** The four families' tool defs. `openProject` is injected (the App owns navigation). */
 export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[] {
