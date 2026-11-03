@@ -93,6 +93,7 @@ import { ProjectMenu } from './ProjectMenu';
 import { ProjectHistoryButton, ProjectHistoryControls } from './ProjectHistoryControls';
 import { useProjectHistory } from './use-project-history';
 import { historyMoved } from '@/lib/project-history';
+import { registerFilmRuntime } from '@/lib/film-runtime';
 import { ProjectsPopover } from './ProjectsLibrary';
 import { FilmFullscreenBar, useFullscreenKeys } from './FilmFullscreenBar';
 import { ViewerBar } from './ViewerBar';
@@ -2992,6 +2993,13 @@ export function ProjectView({ projectId, onProject, onLeave }: {
   const [desktopOpen, setDesktopOpen] = React.useState(false);
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const history = useProjectHistory(projectId, { onError: toast.showError, beforeChange: film.settled });
+  /* the WebMCP tool surface (4.2): its version tools wait on the same write queue the person's
+     edits go through (one state machine, one door — a tool that skipped this could snapshot or
+     check out under a film still being written) */
+  React.useEffect(() => {
+    registerFilmRuntime({ projectId, settled: film.settled });
+    return () => registerFilmRuntime(null);
+  }, [projectId, film.settled]);
   const forgetSteps = React.useRef(film.forget);
   forgetSteps.current = film.forget;
   const refreshHistory = React.useRef(history.refresh);
