@@ -44,7 +44,7 @@ export type StoreListing = { files: StoreFile[]; folders: string[]; pages: { pat
 export type StoreEvent =
   | { type: 'film'; rev: string }
   | { type: 'files'; paths?: string[] }
-  | { type: 'history' }
+  | { type: 'history'; moved?: boolean }
   /** the project changed (opened, renamed, a cover set); `project` when the teller had it at hand */
   | { type: 'project'; project?: StoreProject }
   | { type: 'gone' }

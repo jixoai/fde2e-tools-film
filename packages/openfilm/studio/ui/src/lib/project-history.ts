@@ -210,7 +210,7 @@ export type HistoryResult<T = Record<string, unknown>> = { ok: true; body: T } |
 
 async function call<T = Record<string, unknown>>(projectId: string, path: string, method = 'GET', json?: unknown): Promise<HistoryResult<T>> {
   try {
-    if (isWeb()) return { ok: false, status: 501, code: null }; // web: history actions wait for the OPFS versions batch (tasks 2.3)
+    if (isWeb()) return await webHistory<T>(projectId, path, method, json);
     const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/history${path}`, {
       method,
       ...(json === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(json) }),
@@ -224,17 +224,51 @@ async function call<T = Record<string, unknown>>(projectId: string, path: string
 }
 
 import { isWeb } from '../web/backend.ts';
+import type * as OpfsHistory from '../web/opfs/history.ts';
+
+let opfsHistory: typeof OpfsHistory | null = null;
+const opfs = async (): Promise<typeof OpfsHistory> => {
+  opfsHistory ??= await import('../web/opfs/history.ts');
+  return opfsHistory;
+};
+const webLoadHistory = (id: string) => opfs().then((h) => h.loadHistory(id));
+const webDiffers = (id: string) => opfs().then((h) => h.workingDiffers(id));
+const webSaveVersion = (id: string, name: string) => opfs().then((h) => h.saveVersion(id, name));
+const webDiscard = (id: string) => opfs().then((h) => h.discardChanges(id));
+const webCheckout = (id: string, commit: string) => opfs().then((h) => h.checkoutVersion(id, commit));
+const webRestoreFilm = async (id: string, commit: string) => {
+  const h = await opfs();
+  const film = await h.versionFilm(id, commit);
+  if (film === null) throw new Error(`no such version: ${commit}`);
+  const { writeFilm } = await import('../web/opfs/index.ts');
+  await writeFilm(id, film, null);
+};
+const webDeleteVersions = (id: string, commits: string[]) => opfs().then((h) => h.deleteVersions(id, commits));
+const webRecoverVersions = (id: string, commits: string[]) => opfs().then((h) => h.recoverVersions(id, commits));
+const webLoadDeleted = (id: string) => opfs().then((h) => h.loadDeleted(id));
+
+const webPreview = async (id: string, commit: string): Promise<VersionPreview> => {
+  const h = await opfs();
+  const text = await h.versionFilm(id, commit);
+  if (text === null) throw new Error(`no such version: ${commit}`);
+  const { readFilmFile } = await import('../../../../src/film-doc.mjs');
+  const read = readFilmFile(text);
+  return { folder: `/wf/${id}/versions/${commit}/`, doc: read.doc, missing: [] };
+};
 
 export const historyApi = {
-  preview: (id: string, commit: string) => call<VersionPreview>(id, `/versions/${encodeURIComponent(commit)}/preview`),
+  preview: async (id: string, commit: string) => {
+    if (isWeb()) return { ok: true, body: await webPreview(id, commit) };
+    return call<VersionPreview>(id, `/versions/${encodeURIComponent(commit)}/preview`);
+  },
 
   load: async (id: string, limit = 50, deleted = false) => {
-    if (isWeb()) return null; // web: versions land with the OPFS history batch (tasks 2.3); the panel shows none yet
+    if (isWeb()) return deleted ? webLoadDeletedState(id) : webLoad(id);
     const r = await call(id, `?limit=${limit}${deleted ? '&deleted=1' : ''}`);
     return r.ok ? normalizeHistory(r.body) : null;
   },
   versionFiles: async (id: string, commit: string): Promise<Change[] | null> => {
-    if (isWeb()) return null;
+    if (isWeb()) return [];
     const r = await call(id, `/versions/${commit}`);
     return r.ok ? changeList(r.body.files) : null;
   },
@@ -244,9 +278,71 @@ export const historyApi = {
   /** film.html missing: only it put back, as the version has it; the other files are left as they are */
   restoreFilm: (id: string, commit: string) => call<{ commit: string }>(id, '/film', 'POST', { commit }),
   copy: (id: string, commit: string, name: string) => call<{ project: { id: string; name: string }; missing?: string[] }>(id, '/copy', 'POST', { commit, name }),
-  delete: (id: string, commits: string[]) => call<{ commits: string[] }>(id, '/delete', 'POST', { commits }),
-  recover: (id: string, commits: string[]) => call<{ commits: string[] }>(id, '/recover', 'POST', { commits }),
+  delete: async (id: string, commits: string[]) => {
+    if (isWeb()) return { ok: true as const, body: { commits: await webDeleteVersions(id, commits) } };
+    return call<{ commits: string[] }>(id, '/delete', 'POST', { commits });
+  },
+  recover: async (id: string, commits: string[]) => {
+    if (isWeb()) return { ok: true as const, body: { commits: await webRecoverVersions(id, commits) } };
+    return call<{ commits: string[] }>(id, '/recover', 'POST', { commits });
+  },
 };
+
+/* ── the web face: the OPFS versions tree (src/web/opfs/history.ts) ── */
+
+async function webHistory<T>(projectId: string, path: string, method: string, json: unknown): Promise<HistoryResult<T>> {
+  try {
+    if (path === '/save' && method === 'POST') {
+      const commit = await webSaveVersion(projectId, String((json as { message?: string })?.message ?? ''));
+      return { ok: true, body: { commit } as T };
+    }
+    if (path === '/discard' && method === 'POST') {
+      await webDiscard(projectId);
+      return { ok: true, body: {} as T };
+    }
+    if (path === '/checkout' && method === 'POST') {
+      const commit = String((json as { commit?: string })?.commit ?? '');
+      await webCheckout(projectId, commit);
+      return { ok: true, body: { commit } as T };
+    }
+    if (path === '/film' && method === 'POST') {
+      const commit = String((json as { commit?: string })?.commit ?? '');
+      await webRestoreFilm(projectId, commit);
+      return { ok: true, body: { commit } as T };
+    }
+    return { ok: false, status: 501, code: null };
+  } catch (e) {
+    return { ok: false, status: 409, code: e instanceof Error && /no such version/.test(e.message) ? 'ref' : 'nothing' };
+  }
+}
+
+async function webLoad(id: string): Promise<HistoryState | null> {
+  const h = await webLoadHistory(id);
+  const differs = await webDiffers(id);
+  return {
+    status: {
+      head: h.head || null,
+      branch: 'main',
+      /* the working copy against head: the panel's "Save version" enables on it */
+      changes: differs ? { count: 1, summary: { scenes: { added: 0, removed: 0, edited: 0 }, sounds: { added: 0, removed: 0, edited: 0 }, stage: false, other: true }, files: [] } : null,
+    },
+    versions: h.versions.map((v) => ({ commit: v.commit, parents: [], at: v.at, kind: 'named' as const, name: v.name, restored: null })),
+    more: false,
+    deletedCount: 0,
+  };
+}
+
+/** The Deleted view's state, from the web face's deleted records: the same HistoryState shape the
+    server answers for `deleted=1`, with the records in the versions slot. */
+async function webLoadDeletedState(id: string): Promise<HistoryState> {
+  const { deleted, count } = await webLoadDeleted(id);
+  return {
+    status: { head: null, branch: 'main', changes: null },
+    versions: deleted.map((d) => ({ commit: d.version.commit, parents: [], at: d.version.at, kind: 'named' as const, name: d.version.name, restored: null })),
+    more: false,
+    deletedCount: count,
+  };
+}
 
 /** Which sentence a refusal gets: always our own words, never the server's text. */
 export function historyErrorKey(result: { status: number; code: string | null }): string {

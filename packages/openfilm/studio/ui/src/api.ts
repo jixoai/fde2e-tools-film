@@ -195,8 +195,32 @@ export const api = {
     if (isWeb()) return store.markOpened(id).then(() => store.getProject(id)).then((r) => { if (!r) throw new ApiError('gone', 404, {}); return { project: asProject(r) }; });
     return call<{ project: Project }>(`${p(id)}/opened`, { method: 'POST' });
   },
-  /* `undo`: the edit puts back an earlier one (Studio keeps the person's edits over an agent's writes until then) */
-  edit: (id: string, base: string | null, ops: Op[], undo = false) => call<{ text: string; rev: string; value: Film; doc: Film; rebased: boolean }>(`${p(id)}/edit`, { method: 'POST', json: { base, ops, ...(undo ? { undo: true } : {}) } }),
+  /* `undo`: the edit puts back an earlier one (Studio keeps the person's edits over an agent's writes until then).
+     Web: the same contract out of OPFS — applyOps here (the editor already holds the module), filmHtml writes
+     back over the text it read, and the rev is the written text's hash. `base` mismatch answers null the
+     caller turns into its conflict path (the server face's 409). */
+  edit: async (id: string, base: string | null, ops: Op[], undo = false) => {
+    if (isWeb()) {
+      web();
+      const current = await store.readFilm(id);
+      if (!current) throw new ApiError('the project is gone', 404, {});
+      if (base !== null && base !== current.rev) {
+        const read = readFilmFile(current.text);
+        throw Object.assign(new ApiError('the film moved under this edit', 409, {}), { value: read.doc, rev: current.rev });
+      }
+      const { applyOps } = await import('../../../studio/server/ops.mjs');
+      const { filmHtml } = await import('../../../src/film-doc.mjs');
+      const read = readFilmFile(current.text);
+      if (!read.doc) throw new ApiError(read.problems.join('\n') || 'film.html cannot be read', 422, {});
+      const after = applyOps(structuredClone(read.value!), ops) as Film;
+      const text = filmHtml(after, current.text);
+      const rev = await store.writeFilm(id, text, current.rev);
+      if (rev === null) throw Object.assign(new ApiError('the film moved under this edit', 409, {}), { value: read.doc, rev: current.rev });
+      const written = readFilmFile(text);
+      return { text, rev, value: written.doc ? written.value : after, doc: written.doc, rebased: false };
+    }
+    return call<{ text: string; rev: string; value: Film; doc: Film; rebased: boolean }>(`${p(id)}/edit`, { method: 'POST', json: { base, ops, ...(undo ? { undo: true } : {}) } });
+  },
   files: (id: string): Promise<Listing> => isWeb()
     ? store.listFiles(id).then((l) => ({ files: l.files, folders: l.folders, pages: l.pages }))
     : call<Listing>(`${p(id)}/files`),
@@ -313,7 +337,7 @@ export type SpendAsk = {
 /** What the person is told without a question (studio/server/get.mjs): a provider with no balance left for a run. */
 export type StudioNotice = { id: string; kind: 'balance'; provider: string; providerId: string };
 
-export type FolderEvent = { type: 'film'; rev: string } | { type: 'files'; paths?: string[] } | { type: 'history' } | { type: 'export'; job: ExportJob } | { type: 'open'; to: string }
+export type FolderEvent = { type: 'film'; rev: string } | { type: 'files'; paths?: string[] } | { type: 'history'; moved?: boolean } | { type: 'export'; job: ExportJob } | { type: 'open'; to: string }
   | { type: 'history-progress'; op: string; phase: string; done: number; total: number }
   | { type: 'ask'; ask: SpendAsk } | { type: 'asked'; id: string } | { type: 'notice'; notice: StudioNotice } | { type: 'project'; project: Project }
   /* its folder is there but film.html is not (an agent writing it again, or it lost): the project stays open and
