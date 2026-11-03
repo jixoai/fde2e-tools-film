@@ -49,6 +49,7 @@ export function ProjectsView({
   onDeleteFolder,
   onMoveToFolder,
   onMoveFolder,
+  onSaveBack,
   onClose,
   heading,
 }: {
@@ -86,6 +87,9 @@ export function ProjectsView({
   onMoveToFolder: (projectId: string, folderId: string | null) => void;
   /** a folder into another (null: the top level) */
   onMoveFolder: (folderId: string, parentId: string | null) => void;
+  /** Web face's 存回真实文件夹 (FSA): the project package into a folder of the person's disk.
+      Passed only where it exists (the web face + a browser with the API); absent: no menu item. */
+  onSaveBack?: (project: LibraryProject) => void;
   /** Missing: no close button (Studio has no project to go back to). */
   onClose?: () => void;
   /** The title row's left, in place of "Projects" (the launcher's switch between the projects and the examples). */
@@ -233,6 +237,7 @@ export function ProjectsView({
       onMoveToFolder: () => setMoving({ project }),
       onLocate: () => onLocate(project),
       onDelete: () => onDelete([project.id]),
+      onSaveBack: onSaveBack ? () => onSaveBack(project) : undefined,
     };
   }
 
@@ -407,6 +412,7 @@ interface ItemProps {
   onMoveToFolder: () => void;
   onLocate: () => void;
   onDelete: () => void;
+  onSaveBack?: () => void;
 }
 
 function SelectionCheck({ selected }: { selected: boolean }) {
@@ -664,6 +670,7 @@ function ProjectCard({
   onMoveToFolder,
   onLocate,
   onDelete,
+  onSaveBack,
 }: ItemProps) {
   const t = useT();
   const language = useLanguage();
@@ -717,7 +724,7 @@ function ProjectCard({
             {project.working ? <span className="truncate text-[var(--accent)]">· {t('projects.agentRunning')}</span> : null}
           </button>
         </div>
-        {!selecting ? <ItemMenu project={project} onOpen={onOpen} onStartRename={onStartRename} onStartSelect={onStartSelect} onMoveToFolder={onMoveToFolder} onLocate={onLocate} onDelete={onDelete} size={14} /> : null}
+        {!selecting ? <ItemMenu project={project} onOpen={onOpen} onStartRename={onStartRename} onStartSelect={onStartSelect} onMoveToFolder={onMoveToFolder} onLocate={onLocate} onDelete={onDelete} onSaveBack={onSaveBack} size={14} /> : null}
       </div>
     </article>
   );
@@ -756,19 +763,19 @@ function MissingActions({ reason, onLocate, onRemove, compact = false }: { reaso
  */
 function ItemMenu({
   project,
-  onOpen,
   onStartRename,
   onStartSelect,
   onMoveToFolder,
   onLocate,
   onDelete,
+  onSaveBack,
   size,
-}: Pick<ItemProps, 'project' | 'onOpen' | 'onStartRename' | 'onStartSelect' | 'onMoveToFolder' | 'onLocate' | 'onDelete'> & { size: number }) {
+}: Pick<ItemProps, 'project' | 'onOpen' | 'onStartRename' | 'onStartSelect' | 'onMoveToFolder' | 'onLocate' | 'onDelete' | 'onSaveBack'> & { size: number }) {
   const cover = React.useContext(ProjectCoverContext);
   if (project.missing) return <ProjectMenu onLocate={onLocate} onRemove={onDelete} size={size} />;
   return (
     <ProjectMenu
-      onOpen={onOpen}
+      onSaveBack={onSaveBack}
       onRename={onStartRename}
       onSelect={onStartSelect}
       onMoveToFolder={onMoveToFolder}
@@ -797,6 +804,7 @@ function ProjectListRow({
   onMoveToFolder,
   onLocate,
   onDelete,
+  onSaveBack,
 }: ItemProps) {
   const t = useT();
   const language = useLanguage();
@@ -837,7 +845,7 @@ function ProjectListRow({
         </button>
       </div>
       {project.missing && !selecting ? <MissingActions compact reason={project.missingReason} onLocate={onLocate} onRemove={onDelete} /> : null}
-      {!selecting ? <ItemMenu project={project} onOpen={onOpen} onStartRename={onStartRename} onStartSelect={onStartSelect} onMoveToFolder={onMoveToFolder} onLocate={onLocate} onDelete={onDelete} size={15} /> : null}
+      {!selecting ? <ItemMenu project={project} onOpen={onOpen} onStartRename={onStartRename} onStartSelect={onStartSelect} onMoveToFolder={onMoveToFolder} onLocate={onLocate} onDelete={onDelete} onSaveBack={onSaveBack} size={15} /> : null}
     </article>
   );
 }

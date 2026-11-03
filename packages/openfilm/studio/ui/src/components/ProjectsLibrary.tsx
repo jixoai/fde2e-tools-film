@@ -20,6 +20,7 @@ import { createPortal } from 'react-dom';
 import { Loader2 } from 'lucide-react';
 import { api, ApiError, LIBRARY_EVENT } from '@/api';
 import { isWeb } from '../web/backend';
+import { saveBackAvailable, pickFolder, saveProjectBack } from '../web/save-back';
 import { useT } from '@/i18n';
 import { folderApi, folderCounts, folderTrail, newProjectIn, type ProjectFolder } from '@/lib/project-folders';
 import { stillThere } from '@/lib/project-delete';
@@ -260,6 +261,18 @@ export function ProjectsPopover({
   const lib = useProjectLibrary(open);
   const { flash } = lib;
   const cover = useProjectCover(lib.coverChanged, React.useCallback(() => flash(t('projects.coverFailed')), [flash, t]));
+  /** 存回真实文件夹 (web, FSA): pick the folder once, write the package. Said either way: what was
+      written, or why nothing was. The picker's cancel says nothing. */
+  const saveBack = React.useCallback(async (projectId: string) => {
+    const dir = await pickFolder();
+    if (!dir) return;
+    try {
+      const done = await saveProjectBack(projectId, dir);
+      flash(t('projects.saveBackDone').replace('{n}', String(done.files)).replace('{name}', done.name));
+    } catch (e) {
+      flash(t('projects.saveBackFailed').replace('{error}', e instanceof Error ? e.message : String(e)));
+    }
+  }, [flash, t]);
   /* each time it opens: the projects (the examples are a switch away) */
   const [view, setView] = React.useState<LauncherView>('projects');
   React.useEffect(() => { if (open) setView('projects'); }, [open]);
@@ -530,6 +543,7 @@ export function ProjectsPopover({
               }}
               onMoveToFolder={lib.moveProject}
               onMoveFolder={lib.moveFolder}
+              onSaveBack={isWeb() && saveBackAvailable() ? (project) => void saveBack(project.id) : undefined}
               onClose={onClose}
             />
             </ProjectCoverContext.Provider>
