@@ -86,3 +86,42 @@ export function laneSupports(laneId: CaptureLaneId, kind: CaptureClipKind): bool
   const lane = LANES.find((l) => l.id === laneId);
   return lane ? lane.supports.includes(kind) : false;
 }
+
+/* ── the preview lane's session contract (3.2's wiring face) ─────────────
+   Screencast frames arrive as { data(base64), metadata } per CDP; the controller only fixes the
+   ORDER of operations the research found load-bearing: bringToFront BEFORE startScreencast (0
+   frames otherwise), start when the picture shows, stop when it hides or the lane goes away. */
+
+/** A frame from a lane's stream: PNG/JPEG/WebP bytes, as the lane made them. */
+export interface LaneFrame { bytes: Uint8Array; at: number }
+
+/** The bridge's screencast face (4.4's contract, mirrored here for the probe and the pump). */
+export interface BridgeScreencast {
+  /** The page must be the visible one: T14 — screencast on a background tab gives 0 frames. */
+  bringToFront(): Promise<void>;
+  startScreencast(opts: { maxWidth?: number; maxHeight?: number; format?: 'jpeg' | 'png' | 'webp' }, onFrame: (frame: { data: string }) => void): Promise<void>;
+  stopScreencast(): Promise<void>;
+}
+
+/** A running frame session; `stop()` is idempotent. */
+export interface LaneSession { stop(): Promise<void> }
+
+/** Drive `screencast` as the preview's pixel source. Returns a session; the caller stops it when
+    the picture unmounts or hides. Frames beyond `maxFrames` backlog are dropped (the preview only
+    ever draws the newest — a screencast is not a recording; the export lane serialises instead). */
+export async function runScreencast(screencast: BridgeScreencast, onFrame: (frame: LaneFrame) => void, opts: { maxWidth?: number; maxHeight?: number; format?: 'jpeg' | 'png' | 'webp' } = {}): Promise<LaneSession> {
+  let stopped = false;
+  await screencast.bringToFront(); // the 0-frames trap: without it the page streams nothing
+  await screencast.startScreencast(opts, (frame) => {
+    if (stopped) return; // frames after stop are the bridge's last word, not news
+    const bytes = Uint8Array.from(atob(frame.data), (c) => c.charCodeAt(0));
+    onFrame({ bytes, at: Date.now() });
+  });
+  return {
+    stop: async () => {
+      if (stopped) return;
+      stopped = true;
+      await screencast.stopScreencast();
+    },
+  };
+}

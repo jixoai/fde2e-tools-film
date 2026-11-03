@@ -53,3 +53,25 @@ test('with the bridge flagged in, the cdp lane answers and page clips open', () 
     delete (globalThis as { window?: unknown }).window;
   }
 });
+
+test('runScreencast: bringToFront before start, frames decoded, stop idempotent', async () => {
+  const { runScreencast } = await import('./capture-lanes.ts');
+  const order: string[] = [];
+  let sink: ((frame: { data: string }) => void) | null = null;
+  let stops = 0;
+  const screencast = {
+    bringToFront: async () => { order.push('front'); },
+    startScreencast: async (_opts: object, onFrame: (frame: { data: string }) => void) => { order.push('start'); sink = onFrame; },
+    stopScreencast: async () => { order.push('stop'); stops += 1; },
+  };
+  const frames: number[] = [];
+  const session = await runScreencast(screencast, (f) => frames.push(f.bytes.length));
+  sink?.({ data: btoa('AB') }); // two bytes
+  sink?.({ data: btoa('C') });
+  await session.stop();
+  await session.stop();
+  sink?.({ data: btoa('never') }); // after stop: not news
+  assert.deepEqual(order, ['front', 'start', 'stop'], 'front before start; the second stop is absorbed');
+  assert.equal(stops, 1, 'stopScreencast called once (session-level idempotence)');
+  assert.deepEqual(frames, [2, 1], 'frames decoded in order, none after stop');
+});
