@@ -4,7 +4,13 @@
  * machine, one door). A version op that skips this could snapshot (or check out under) a film
  * the person is still editing; `settled` is what the Version history panel itself awaits.
  */
-type Runtime = { projectId: string; settled: () => Promise<unknown> };
+type Runtime = {
+  projectId: string;
+  settled: () => Promise<unknown>;
+  /** The preview's spans (film seconds, film-shape ClipSpan): the length a split needs when
+      film.html writes no end of its own (`native` is the source's own length, null for a still). */
+  spans: () => ReadonlyArray<{ id: string; at: number; end: number; native: number | null }>;
+};
 
 let current: Runtime | null = null;
 
@@ -16,4 +22,9 @@ export function registerFilmRuntime(runtime: Runtime | null): void {
 /** Waits for this project's pending writes to land; at once when the page has moved on. */
 export function settledFor(projectId: string): Promise<unknown> {
   return current && current.projectId === projectId ? current.settled() : Promise.resolve();
+}
+
+/** The preview's spans (film seconds): null when no project is mounted here. */
+export function spansFor(projectId: string): ReadonlyArray<{ id: string; at: number; end: number; native: number | null }> | null {
+  return current && current.projectId === projectId ? current.spans() : null;
 }

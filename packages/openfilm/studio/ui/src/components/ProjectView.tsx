@@ -2997,9 +2997,15 @@ export function ProjectView({ projectId, onProject, onLeave }: {
      edits go through (one state machine, one door — a tool that skipped this could snapshot or
      check out under a film still being written) */
   React.useEffect(() => {
-    registerFilmRuntime({ projectId, settled: film.settled });
+    registerFilmRuntime({
+      projectId,
+      settled: film.settled,
+      /* where the preview placed each clip (the timeline's own reading): a split's length when
+         film.html writes no end of its own (webmcp 4.2's splitClip needs it) */
+      spans: () => info?.spans ?? [],
+    });
     return () => registerFilmRuntime(null);
-  }, [projectId, film.settled]);
+  }, [projectId, film.settled, info]);
   const forgetSteps = React.useRef(film.forget);
   forgetSteps.current = film.forget;
   const refreshHistory = React.useRef(history.refresh);
