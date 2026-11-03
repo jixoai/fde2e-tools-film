@@ -12,6 +12,8 @@ import {
   secondsLeft, sourcesApi,
   type BrowseListing, type Example, type FetchJob,
 } from '@/lib/project-sources';
+import { importFilmText, fetchFilmKinded, UrlFilmError } from '../web/import';
+import { isWeb } from '../web/backend';
 import { CardButton } from './Card';
 
 /** A dialog over the Projects window: a card in the middle; Escape and a click outside close it (not the window). */
@@ -349,6 +351,25 @@ export function GitHubDialog({
     setError(null);
     setJob(null);
     setStarting(true);
+    if (isWeb() && !looksLikeRepoUrl(address.trim())) {
+      /* a bare address: the film comes straight from it (D3), nothing proxied */
+      try {
+        const text = await fetchFilmKinded(address.trim());
+        if (!current()) return;
+        const project = await importFilmText(text);
+        if (!current()) return;
+        onDone(project.id);
+      } catch (e) {
+        if (current()) {
+          setError(e instanceof UrlFilmError && e.kind === 'cors'
+            ? t('projects.fetch.error.corsBlocked')
+            : e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (current()) setStarting(false);
+      }
+      return;
+    }
     try {
       const first = await sourcesApi.startFetch(address);
       /* cancelled before Studio answered: stopped now */
@@ -396,7 +417,10 @@ export function GitHubDialog({
   };
   const close = () => { stop(); onClose(); };
 
-  const ready = looksLikeRepoUrl(url) && !running;
+  /* the web face takes a bare film address too (D3's third way in): fetch it directly — CORS or
+     the network refusing is said plainly, with the other three ways in beside it */
+  const isUrlFilm = isWeb() && /^https?:\/\//i.test(url.trim()) && !looksLikeRepoUrl(url.trim());
+  const ready = (looksLikeRepoUrl(url) || isUrlFilm) && !running;
   const failed = error ? <p role="alert" className="text-[12.5px] leading-snug text-[var(--err)]">{error}</p> : null;
   return (
     <SourceDialog label={title ?? t('projects.fetch.title')} width={520} onClose={close} closeOnOutside={!running}>

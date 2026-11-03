@@ -132,13 +132,16 @@ export async function filmRev(text: string): Promise<string> {
 }
 
 /** The film written when it is still at `expect` (optimistic); answers the new rev, or null when
-    someone else moved it first. */
+    someone else moved it first. `expect === null` means "no condition": the first write, or an
+    import that owns the project it just made. */
 export async function writeFilm(id: string, text: string, expect: string | null): Promise<string | null> {
   const dir = await projectDir(id);
   if (!dir) return null;
-  const current = await readText(dir, FILM);
-  const currentRev = current === null ? null : await filmRev(current);
-  if (currentRev !== expect) return null;
+  if (expect !== null) {
+    const current = await readText(dir, FILM);
+    const currentRev = current === null ? null : await filmRev(current);
+    if (currentRev !== expect) return null;
+  }
   await writeText(dir, text, FILM);
   const rev = await filmRev(text);
   tell({ type: 'film', rev });

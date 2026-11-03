@@ -19,9 +19,11 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { Loader2 } from 'lucide-react';
 import { api, ApiError, LIBRARY_EVENT } from '@/api';
+import { isWeb } from '../web/backend';
 import { useT } from '@/i18n';
 import { folderApi, folderCounts, folderTrail, newProjectIn, type ProjectFolder } from '@/lib/project-folders';
 import { stillThere } from '@/lib/project-delete';
+import { importFilmText, looksLikeFilmHtml, nameFromFile } from '../web/import';
 import { studioHost } from '@/lib/host';
 import { SourceError, sourcesApi } from '@/lib/project-sources';
 import { LIST_WAIT_MS, within } from '@/lib/projects-page';
@@ -320,6 +322,30 @@ export function ProjectsPopover({
   }
   /* closed: nothing in progress shows when it opens again */
   React.useEffect(() => { if (!open) setBusy(null); }, [open]);
+  /* the web face's ways in while the list shows (D3): a film's text pasted anywhere, or injected
+     by the browser bridge (window event 'fde2e-film-inject', the BU seam), lands as a new project */
+  React.useEffect(() => {
+    if (!open || !isWeb()) return undefined;
+    const bringIn = (text: string, name?: string) => {
+      if (!looksLikeFilmHtml(text)) return false;
+      setBusy('creating');
+      void importFilmText(text, name)
+        .then((project) => go(project.id, 'creating'))
+        .catch(() => { setBusy(null); flash(t('projects.localProjectFailed')); });
+      return true;
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      if (bringIn(text, 'Pasted film')) e.preventDefault();
+    };
+    const onInject = (e: Event) => {
+      const detail = (e as CustomEvent<{ name?: string; html?: string }>).detail;
+      if (detail?.html) bringIn(detail.html, detail.name);
+    };
+    window.addEventListener('paste', onPaste);
+    window.addEventListener('fde2e-film-inject', onInject);
+    return () => { window.removeEventListener('paste', onPaste); window.removeEventListener('fde2e-film-inject', onInject); };
+  }, [open, flash, t, go]);
   /* another project opened: done */
   const latestClose = React.useRef(close);
   latestClose.current = close;
@@ -404,16 +430,34 @@ export function ProjectsPopover({
     lib.reload();
   }
 
-  /* a folder dropped on the list is opened (where the app can tell where it is) */
+  /* a folder dropped on the list is opened (where the app can tell where it is); the web face
+     takes a film's .html (D3's first way in): its text becomes a new project */
   const folderOf = (e: React.DragEvent) => [...e.dataTransfer.items].find((item) => item.webkitGetAsEntry()?.isDirectory)?.getAsFile() ?? null;
   const onDragOver = (e: React.DragEvent) => {
-    if (studioHost?.folders && e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }
+    const takes = (studioHost?.folders || isWeb()) && (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/plain'));
+    if (takes) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }
   };
   const onDrop = (e: React.DragEvent) => {
-    if (!studioHost?.folders) return;
     e.preventDefault();
-    const file = folderOf(e);
-    const path = file ? studioHost.folders.pathOf(file) : '';
+    const file = [...e.dataTransfer.files].find((f) => /\.html?$/i.test(f.name) || f.type === 'text/html');
+    if (isWeb() && file) {
+      setBusy('creating');
+      void file.text().then((text) => importFilmText(text, nameFromFile(file)))
+        .then((project) => go(project.id, 'creating'))
+        .catch(() => { setBusy(null); lib.flash(t('projects.localProjectFailed')); });
+      return;
+    }
+    if (file) {
+      // the server face gets the file's path from the app (it knows the disk); the web's file has none
+      setBusy('creating');
+      void file.text().then((text) => importFilmText(text, nameFromFile(file)))
+        .then((project) => go(project.id, 'creating'))
+        .catch(() => { setBusy(null); lib.flash(t('projects.localProjectFailed')); });
+      return;
+    }
+    if (!studioHost?.folders) { lib.flash(t('projects.dropFolder')); return; }
+    const folderFile = folderOf(e);
+    const path = folderFile ? studioHost.folders.pathOf(folderFile) : '';
     if (path) void openFolder(path);
     else lib.flash(t('projects.dropFolder'));
   };

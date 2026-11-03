@@ -263,6 +263,7 @@ export const es: Words = {
         tooBig: 'Es demasiado grande, así que se detuvo.',
         timeout: 'No llegó nada durante un rato, así que se detuvo. Revisa tu conexión a internet y vuelve a intentarlo.',
         git: 'Este necesita git: es privado o no está en GitHub. Instala git y vuelve a intentarlo.',
+        corsBlocked: 'El otro sitio no permitió esta lectura entre sitios (sin respuesta CORS). Tráelo de otra forma: descarga el archivo y suéltalo aquí, pega el texto de la película o pide a tu agente que lo traiga.',
       },
     },
     examples: {

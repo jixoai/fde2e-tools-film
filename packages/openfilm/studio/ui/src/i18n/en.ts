@@ -264,6 +264,7 @@ export const en = {
         tooBig: 'It’s too big to get, so it was stopped.',
         timeout: 'Nothing came for a while, so it was stopped. Check your internet connection, then try again.',
         git: 'This one needs git: it is private, or not on GitHub. Install git, then try again.',
+        corsBlocked: 'The other site didn’t allow this cross-site read (no CORS answer). Get it another way: download the file and drop it here, paste the film’s text, or have your agent bring it in.',
       },
     },
     examples: {

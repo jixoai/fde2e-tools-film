@@ -264,6 +264,7 @@ export const zhCN: Words = {
         tooBig: '内容太大，已停止获取。',
         timeout: '一段时间内没有收到任何数据，已停止。请检查网络连接后重试。',
         git: '这个仓库是私有的或不在 GitHub 上，需要 git。请安装 git 后重试。',
+        corsBlocked: '对方站点未允许跨站读取（没有 CORS 应答）。请换一种方式：下载文件后拖到这里、直接粘贴影片文本，或让你的 Agent 送进来。',
       },
     },
     examples: {
