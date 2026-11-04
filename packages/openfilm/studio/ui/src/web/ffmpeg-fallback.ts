@@ -11,11 +11,25 @@
  */
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 
-/** Where the vendored core lives (public/ffmpeg, served from the site root). */
-const CORE_BASE = '/ffmpeg';
-const CORE_JS = `${CORE_BASE}/ffmpeg-core.js`;
-const CORE_WASM = `${CORE_BASE}/ffmpeg-core.wasm`;
-const WORKER_JS = `${CORE_BASE}/worker.js`;
+/** D6's final deployment choice (3.6 / option C): Film owns one same-origin, single-threaded
+ *  fallback. There is no ffmpeg.tool runtime and no COI/SharedArrayBuffer product mode. */
+export const FFMPEG_FALLBACK_DEPLOYMENT = Object.freeze({
+  mode: 'main-site-vendored-st',
+  coreBase: '/ffmpeg',
+  multithreaded: false,
+  requiresCrossOriginIsolation: false,
+} as const);
+
+/** Resolve every runtime asset against the current Film origin. Keeping this function explicit
+ *  makes the "no cross-origin encoder service" boundary executable in tests and diagnostics. */
+export function ffmpegAssetUrls(origin: string): { coreURL: string; wasmURL: string; classWorkerURL: string } {
+  const base = FFMPEG_FALLBACK_DEPLOYMENT.coreBase;
+  return {
+    coreURL: new URL(`${base}/ffmpeg-core.js`, origin).href,
+    wasmURL: new URL(`${base}/ffmpeg-core.wasm`, origin).href,
+    classWorkerURL: new URL(`${base}/worker.js`, origin).href,
+  };
+}
 
 /** The formats this tier exists for (the encode matrix's wasm column). */
 export type FallbackFormat = 'gif' | 'prores' | 'mp3' | 'wav' | 'mkv';
@@ -34,11 +48,7 @@ async function ffmpeg(): Promise<FFmpeg> {
   instance ??= new FFmpeg();
   if (!loading) {
     loading = instance
-      .load({
-        coreURL: new URL(CORE_JS, location.origin).href,
-        wasmURL: new URL(CORE_WASM, location.origin).href,
-        classWorkerURL: new URL(WORKER_JS, location.origin).href,
-      })
+      .load(ffmpegAssetUrls(location.origin))
       .then(() => instance as FFmpeg);
   }
   return loading;

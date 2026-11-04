@@ -65,6 +65,7 @@
     "build:ui": "node studio/ui/scripts/emit-film-runtime.mjs && vite build --config studio/ui/vite.config.ts",
     "prebuild:ui": "node scripts/vendor-ffmpeg.mjs",
     "webmcp-check": "node scripts/webmcp-check.mjs",
+    "ffmpeg-deployment-check": "node scripts/ffmpeg-deployment-check.mjs",
     "vendor-ffmpeg": "node scripts/vendor-ffmpeg.mjs"
   },
   "devDependencies": {
