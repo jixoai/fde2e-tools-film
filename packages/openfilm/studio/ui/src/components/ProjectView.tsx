@@ -3605,9 +3605,44 @@ export function ProjectView({ projectId, onProject, onLeave }: {
         onQueued={(jobs) => exportTrayRef.current?.push(jobs)}
         projectFps={projectFps}
         missingFiles={[...mediaTrouble].flatMap(([src, why]) => (why === 'missing' ? [src] : []))}
+        {...(isWeb() ? {
+          webSource: () => {
+            const frame = preview.current?.frame?.() ?? null;
+            const win = frame?.contentWindow ?? null;
+            if (!frame || !win) return null;
+            return {
+              seek: (t: number) => new Promise<void>((done) => {
+                const once = () => { win.removeEventListener('message', once); done(); };
+                win.addEventListener('message', once);
+                preview.current?.seek(t);
+                setTimeout(done, 3000); // the drawn signal can be missed between loads; don't hang
+              }),
+              capture: async () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = stage.w; canvas.height = stage.h;
+                // an iframe is not a CanvasImageSource — same-origin, so the page draws
+                // itself onto one (the in-page lane's own composition; T04's keep)
+                const ctx = canvas.getContext('2d')!;
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, stage.w, stage.h);
+                const doc = frame.contentDocument;
+                const html = doc?.documentElement;
+                if (html) {
+                  const svg = new XMLSerializer().serializeToString(html);
+                  const img = new Image();
+                  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+                  await new Promise<void>((done) => { img.onload = () => done(); img.onerror = () => done(); });
+                  ctx.drawImage(img, 0, 0, stage.w, stage.h);
+                }
+                return canvas;
+              },
+              size: () => ({ w: stage.w, h: stage.h }),
+            };
+          },
+        } : {})}
       />
       <PasteAttrsDialog attrs={pasteAttrsOpen ? copiedAttrs : null} onPaste={doPasteAttrs} onCancel={() => setPasteAttrsOpen(false)} />
-      <ExportTray ref={exportTrayRef} projectId={projectId} onError={toast.showError} inset={hostPanel?.open ? hostPanel.width : 0} />
+      <ExportTray ref={exportTrayRef} projectId={projectId} onError={toast.showError} inset={hostPanel?.open ? hostPanel.width : 0} webJobs={isWeb()} />
       {!isWeb() && <SpendAsks projectId={projectId} />}
       <Toast toast={toast.current} />
     </div>

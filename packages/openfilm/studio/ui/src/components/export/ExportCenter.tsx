@@ -38,6 +38,7 @@ import {
   type ExportQuality,
   type ExportVideoCodec,
 } from '@/lib/export-spec';
+import * as storePut from '@/web/opfs';
 import {
   formatBytes,
   formatFilmTime,
@@ -237,6 +238,9 @@ export interface ExportCenterProps {
   focusClipId?: string;
   /** The exports were queued (the tray shows them). */
   onQueued?: (jobs: ExportJob[]) => void;
+  /** The web face's pixel source (the preview's seek/capture/size): a web queue works the
+      film in the page (lib/web-export). Absent on the server face (it queues to Studio). */
+  webSource?: () => import('@/web/web-export').PreviewPixelSource | null;
   /** The project's frame rate (`.film/settings.json`, else its footage's): a video's rate unless another is picked. */
   projectFps?: number;
   /** Media files the film uses that are gone: an export that draws or plays the film stops at them, so it is held back. */
@@ -536,6 +540,24 @@ export function ExportCenter(props: ExportCenterProps) {
          of this screen comes through here */
       const typed = nameTyped && !toDrafts ? exportName.trim() : '';
       const named = typed ? jobs.map((job, index) => ({ ...job, name: typed + (canRange && range && rangeDelivery === 'separate' && (parsedRanges?.length ?? 0) > 1 ? ` - ${String(index + 1).padStart(2, '0')}` : '') })) : jobs;
+      if (props.webSource) {
+        // the web face: the page works the export itself (lib/web-export); one at a time
+        const source = props.webSource();
+        if (!source) { setResult({ ok: false, text: t('exportCenter.engineDown') }); setWorking(null); return; }
+        const { startWebExport } = await import('@/web/web-export');
+        const queued: ExportJob[] = [];
+        for (const request of named) {
+          try {
+            queued.push(startWebExport(props.projectId, request, source, { putFile: (id, path, data) => storePut.putFile(id, path, data) }));
+          } catch (e) {
+            if (!queued.length) { setResult({ ok: false, text: e instanceof Error ? e.message : String(e) }); setWorking(null); return; }
+            break; // the first landed; the rest wait for it (one queue)
+          }
+        }
+        props.onQueued?.(queued);
+        onClose();
+        return;
+      }
       const queued = await startExports(props.projectId, named, s.folder || undefined);
       props.onQueued?.(queued);
       onClose();

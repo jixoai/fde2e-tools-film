@@ -52,7 +52,7 @@ export interface ExportTrayHandle {
  * `onError`: a finished export that could not be opened or shown (its file moved or deleted since), in a sentence.
  * `inset`: how much of the window's right side the app's own panel takes (its chat): the tray stays beside it, not under it.
  */
-export const ExportTray = React.forwardRef<ExportTrayHandle, { projectId: string; onError?: (message: string) => void; inset?: number }>(function ExportTray({ projectId, onError, inset = 0 }, ref) {
+export const ExportTray = React.forwardRef<ExportTrayHandle, { projectId: string; onError?: (message: string) => void; inset?: number; webJobs?: boolean }>(function ExportTray({ projectId, onError, inset = 0, webJobs = false }, ref) {
   const t = useT();
   const fileAction = (run: Promise<void>) => { void run.catch(() => onError?.(t('exportTray.fileGone'))); };
   const [jobs, setJobs] = React.useState<ExportJob[]>([]);
@@ -63,6 +63,10 @@ export const ExportTray = React.forwardRef<ExportTrayHandle, { projectId: string
   const cancelling = (job: ExportJob) => jobIsActive(job) && (job.cancelling || cancelAsked.has(job.id));
   const cancel = (job: ExportJob) => {
     setCancelAsked((s) => new Set(s).add(job.id));
+    if (webJobs) {
+      void import('@/web/web-export').then(({ cancelWebExport }) => { cancelWebExport(projectId, job.id); });
+      return;
+    }
     void cancelExport(projectId, job.id).catch(() => setCancelAsked((s) => { const next = new Set(s); next.delete(job.id); return next; }));
   };
 
@@ -95,6 +99,18 @@ export const ExportTray = React.forwardRef<ExportTrayHandle, { projectId: string
     setDismissed(closedOf(projectId));
     setCancelAsked(new Set());
     let live = true;
+    if (webJobs) {
+      void import('@/web/web-export').then(({ listWebExports, onWebExportJob }) => {
+        if (!live) return;
+        setJobs((prev) => {
+          const known = new Set(prev.map((j) => j.id));
+          return [...prev, ...listWebExports(projectId).filter((j) => !known.has(j.id))];
+        });
+        onWebExportJob((job) => { if (live) merge([job]); });
+      });
+      const stopWeb = () => { live = false; };
+      return stopWeb;
+    }
     void listExports(projectId).then((r) => {
       if (!live) return;
       setJobs((prev) => {
