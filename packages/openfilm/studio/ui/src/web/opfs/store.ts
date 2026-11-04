@@ -96,21 +96,69 @@ export async function getProject(id: string): Promise<StoreProject | null> {
   return found === id ? describe(dir, id) : null;
 }
 
-/** A new project: `projects/<id>/` with film.html, `.film/` and an empty `assets/`. */
-export async function createProject(name?: string): Promise<StoreProject> {
-  const id = newId();
-  /* the folder's name IS the id — the one key every reader (URL, events, rename) uses; the name a
-     person sees lives beside it (.film/name) and follows renameProject */
-  const dir = (await projectDir(id, true))!;
+export type ProjectSeedFile = { path: string; data: Blob | ArrayBuffer | string };
+
+const safeSeedPath = (path: string): boolean => path.length > 0 && path.length <= 240
+  && !path.startsWith('/') && !path.includes('\\')
+  && path.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
+const RESERVED_STATE_FILES = new Set([
+  `${STATE}/${STATE_ID}`, `${STATE}/${STATE_NAME}`, `${STATE}/${STATE_OPENED}`, `${STATE}/${STATE_COVER}`,
+]);
+
+/**
+ * Commit a complete project tree. The `.film/id` marker is written last, so library readers never
+ * observe a half-imported project. If any write or cancellation fails before that commit point, the
+ * unmarked staging directory is removed; even a failed cleanup remains invisible to listProjects.
+ */
+export async function createProjectFromFiles(
+  name: string | undefined,
+  files: readonly ProjectSeedFile[],
+  options: { signal?: AbortSignal } = {},
+): Promise<StoreProject> {
+  const seen = new Set<string>();
+  for (const file of files) {
+    if (!safeSeedPath(file.path) || seen.has(file.path) || RESERVED_STATE_FILES.has(file.path)) {
+      throw new Error(`invalid or repeated project file path: ${file.path}`);
+    }
+    seen.add(file.path);
+  }
+  if (!seen.has(FILM)) throw new Error('a project seed must include film.html');
+
   const all = await listProjects();
-  const shown = name?.trim().replace(/[/\\:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() || untitled(new Set(all.map((p) => p.name)));
-  const now = String(Date.now());
-  await writeState(dir, STATE_ID, id);
-  await writeState(dir, STATE_NAME, shown);
-  await writeState(dir, STATE_OPENED, now);
-  await writeText(dir, emptyFilmHtml(), FILM);
-  await ensureDir(dir, [ASSETS]);
-  return (await describe(dir, id))!;
+  const shown = name?.trim().replace(/[/\\:*?"<>|]/g, ' ').replace(/\s+/g, ' ').slice(0, 120).trim()
+    || untitled(new Set(all.map((p) => p.name)));
+  const id = newId();
+  const dir = (await projectDir(id, true))!;
+  const openedAt = Date.now();
+  const abort = () => {
+    if (options.signal?.aborted) throw new DOMException('project import cancelled', 'AbortError');
+  };
+
+  try {
+    abort();
+    await ensureDir(dir, [ASSETS]);
+    for (const file of files) {
+      abort();
+      const parts = file.path.split('/');
+      if (typeof file.data === 'string') await writeText(dir, file.data, ...parts);
+      else await writeBytes(dir, file.data, ...parts);
+    }
+    abort();
+    await writeState(dir, STATE_NAME, shown);
+    await writeState(dir, STATE_OPENED, String(openedAt));
+    abort();
+    await writeState(dir, STATE_ID, id); // commit marker: no fallible work after this write
+  } catch (error) {
+    await removeTree(await root(), id);
+    throw error;
+  }
+
+  return { id, name: shown, openedAt, createdAt: openedAt, missing: false };
+}
+
+/** A new project: `projects/<id>/` with film.html, `.film/` and an empty `assets/`. */
+export function createProject(name?: string): Promise<StoreProject> {
+  return createProjectFromFiles(name, [{ path: FILM, data: emptyFilmHtml() }]);
 }
 
 /** A project's film text with its revision; null when the project (or its film) is not there. */

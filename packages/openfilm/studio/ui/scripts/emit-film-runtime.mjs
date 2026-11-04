@@ -1,7 +1,8 @@
 /**
  * Emits the film's in-page runtime as static files the web face serves verbatim
- * (vite copies `public/`): `__film/timeline.mjs`, `__film/film-doc.mjs`, `__film/overrides.mjs` —
- * the very files the server host served from src/ (src/host.mjs). Run before `build:ui` and `dev`.
+ * (vite copies `public/`): the timeline modules plus Studio's bridge/stage templates. The OPFS
+ * service worker injects the latter with the current editor origin, matching studio/server/pages.mjs.
+ * Run before `build:ui` and `dev`.
  */
 import { copyFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,4 +15,6 @@ mkdirSync(dest, { recursive: true });
 for (const name of ['timeline.mjs', 'film-doc.mjs', 'overrides.mjs']) {
   copyFileSync(join(src, name), join(dest, name));
 }
+const server = join(root, '..', 'server');
+for (const name of ['bridge.js', 'stage.js']) copyFileSync(join(server, name), join(dest, name));
 console.log('emit-film-runtime: __film/ ready');

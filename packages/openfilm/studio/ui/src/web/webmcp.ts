@@ -202,10 +202,19 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
     {
       name: 'projects_load_example',
       title: 'Load example',
-      description: 'Not yet: the example films land with batch 5.1. Present so agents can probe the surface; answers unavailable.',
-      inputSchema: jsonSchema({}),
-      annotations: { readOnlyHint: true },
-      execute: async () => say({ error: 'examples land with batch 5.1' }),
+      description: 'Copy a bundled, checksum-verified example into a normal OPFS project and open it. The project includes its source, AI-material provenance and all license notices.',
+      inputSchema: jsonSchema({ id: { type: 'string', description: `Bundled example id (default: one-prompt)` } }),
+      annotations: { readOnlyHint: false },
+      execute: async ({ id }) => {
+        try {
+          const { DEFAULT_EXAMPLE_ID, loadBundledExample } = await import('./examples.ts');
+          const project = await loadBundledExample(typeof id === 'string' && id ? id : DEFAULT_EXAMPLE_ID);
+          openProject(project.id);
+          return say({ ok: true, id: project.id, name: project.name, example: typeof id === 'string' && id ? id : DEFAULT_EXAMPLE_ID });
+        } catch (e) {
+          return say({ error: e instanceof Error ? e.message : String(e) });
+        }
+      },
     },
 
     // ── produce ──

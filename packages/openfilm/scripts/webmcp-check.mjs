@@ -30,7 +30,7 @@ import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { extname, join } from "node:path";
+import { extname, join, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
@@ -62,11 +62,11 @@ const EXPECT = {
 /** 护栏对表（L0 只读必须 readOnlyHint:true；破坏性必须 consequentialHint:true）。 */
 const GUARDRAIL = {
   readOnly: ["film_state", "film_problems", "film_overrides", "edit_read_page", "edit_list_versions",
-    "projects_list", "projects_export_package", "projects_load_example", "produce_look", "produce_render", "produce_export_status"],
+    "projects_list", "projects_export_package", "produce_look", "produce_render", "produce_export_status"],
   consequential: ["edit_restore_overrides", "edit_write_page", "edit_checkout_version", "edit_discard_changes", "projects_delete"],
   mutation: ["edit_apply", "edit_move_clip", "edit_remove_clip", "edit_insert_clip", "edit_split_clip", "edit_trim_clip",
     "edit_set_speed", "edit_set_volume", "edit_set_box", "edit_set_props", "edit_set_track", "edit_reorder_tracks",
-    "edit_set_stage", "edit_save_version", "edit_copy_version", "projects_create", "projects_open"],
+    "edit_set_stage", "edit_save_version", "edit_copy_version", "projects_create", "projects_open", "projects_load_example"],
 };
 
 const NAME_RE = /^[a-zA-Z0-9_.-]{1,128}$/;
@@ -94,8 +94,12 @@ function serveDir(dir) {
         /* the address bar IS the app's router (projects_open pushes /projects/<id>): a reload of
            one must come back as the app — same as the deploy vhost's SPA fallback. Extension-less
            paths answer index-web.html (the site's only face); files keep their own names. */
-        if (!extname(urlPath)) urlPath = "/index-web.html";
-        const filePath = join(dir, urlPath === "/" ? "index.html" : urlPath);
+        const root = resolvePath(dir);
+        let filePath = resolvePath(root, `.${urlPath === "/" ? "/index-web.html" : urlPath}`);
+        if (filePath !== root && !filePath.startsWith(`${root}${sep}`)) throw new Error("path escaped static root");
+        /* Extension-less legal assets (LICENSE) win over SPA fallback. Only a missing route falls
+           through to the app shell. This is the exact behavior the deployment vhost must mirror. */
+        if (!existsSync(filePath) && !extname(urlPath)) filePath = join(root, "index-web.html");
         const body = await readFile(filePath);
         res.writeHead(200, { "content-type": MIME[extname(filePath)] ?? "application/octet-stream" });
         res.end(body);
@@ -312,10 +316,29 @@ async function assertFullChain(browser) {
     const afterDel = await call(page, "projects_list", {});
     if (afterDel.projects?.some((p) => p.id === created.id)) throw new Error("删除后列表仍见该 id");
 
-    return { createdId: created.id, editCount: 10 };
+    // ── bundled example 5.1：校验后建普通项目、打开、notice/OFL/AI 标识都随包 ──
+    const example = await call(page, "projects_load_example", { id: "one-prompt" });
+    if (!example.ok || !example.id) throw new Error(`projects_load_example: ${JSON.stringify(example)}`);
+    await page.waitForTimeout(400);
+    const exampleState = await call(page, "film_state", {});
+    if (exampleState.project?.id !== example.id || exampleState.tracks?.length !== 2) throw new Error(`example film 未打开/结构错: ${JSON.stringify(exampleState)}`);
+    for (const [path, word] of [
+      ["THIRD_PARTY_NOTICES.md", "AI-generated material notice"],
+      ["EXAMPLE-METADATA.json", "aiGeneratedMaterials"],
+      ["assets/fonts/OFL.txt", "SIL OPEN FONT LICENSE"],
+      ["src/px/LICENSE-pdoom-video.txt", "Giacomo Magnanini"],
+      ["vendor/three/LICENSE", "three.js authors"],
+    ]) {
+      const read = await call(page, "edit_read_page", { path });
+      if (typeof read.text !== "string" || !read.text.includes(word)) throw new Error(`example notice 缺失 ${path}/${word}: ${JSON.stringify(read)}`);
+    }
+    const exampleDel = await call(page, "projects_delete", { id: example.id });
+    if (!exampleDel.ok) throw new Error(`example cleanup: ${JSON.stringify(exampleDel)}`);
+
+    return { createdId: created.id, exampleId: example.id, editCount: 10 };
   });
   if (errors.length) throw new Error(`页面错误 ${errors.length}: ${errors[0]}`);
-  record(`[项目族] create→open→insert→split(两半相接,${out.createdId ? "x-b 契约" : ""})→trim→版本层→页读写→包(zip 魔数)→reload 持久化→delete 全链`, true);
+  record(`[项目族] create→open→insert→split(两半相接,${out.createdId ? "x-b 契约" : ""})→trim→版本层→页读写→包(zip 魔数)→reload→delete；load_example(${out.exampleId}) notice/OFL/AI 标识全链`, true);
   record("[edit 链] 负面护栏（speed=0 人话拒/gone clip 拒/锁定轨拒）＋非法矩阵 9 例 ok:false 不 reject", true);
   record("[produce] 未接线工具如实答 unavailable（不谎报成功）＋export_status 答环境能力", true);
 }

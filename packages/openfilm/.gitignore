@@ -5,3 +5,8 @@ node_modules/
 studio/ui/dist/
 /film.html
 .dev/
+
+# build-generated self-hosted example runtime + checksum manifests
+studio/ui/public/examples/examples.json
+studio/ui/public/examples/one-prompt/manifest.json
+studio/ui/public/examples/one-prompt/vendor/

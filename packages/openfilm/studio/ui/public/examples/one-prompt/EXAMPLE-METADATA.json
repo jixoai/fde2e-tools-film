@@ -1,0 +1,25 @@
+{
+  "format": 1,
+  "id": "one-prompt",
+  "edition": "FDE2E",
+  "source": {
+    "repository": "https://github.com/openfilm/examples",
+    "commit": "65d717b7ba27b9e665dc6bb6e8e3b6579048288d",
+    "folder": "one-prompt",
+    "license": "MIT"
+  },
+  "adaptations": [
+    "Pinned three.js 0.184.0 is self-hosted with the project instead of loaded from jsDelivr.",
+    "The upstream OpenFilm trademark end plate is replaced by an FDE2E Film end plate.",
+    "License and attribution notices travel inside every loaded/exported project."
+  ],
+  "aiGeneratedMaterials": [
+    {
+      "path": "assets/one-prompt.mp3",
+      "kind": "music",
+      "generator": "ElevenLabs Music",
+      "createdBy": "OpenFilm contributors",
+      "notice": "AI-generated music adapted from the upstream MIT-licensed example; review applicable platform and jurisdiction disclosure duties before publishing."
+    }
+  ]
+}

@@ -362,7 +362,7 @@ export function ExamplesDialog({ projectId, open, onClose, onStarted }: { projec
         />
       </div>
       {starting ? (
-        <GitHubDialog url={starting.url} start title={starting.title}
+        <GitHubDialog url={starting.url} start exampleId={starting.id} title={starting.title}
           onDone={(id) => { setStarting(null); onStarted(id); onClose(); }}
           onClose={() => setStarting(null)} />
       ) : null}

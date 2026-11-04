@@ -12,7 +12,7 @@ const EDITOR = 'http://127.0.0.1:4792';
  * `alone`: a web page on its own (the media pane's viewer), with no timeline in it: its own frame(t) draws.
  * `duration` null: a page without one.
  */
-function filmPage({ alone = false, duration = 10 } = {}) {
+function filmPage({ alone = false, duration = 10, sameOriginWeb = false } = {}) {
   const listeners = new Map();
   const said = [];
   const drawn = [];
@@ -26,11 +26,12 @@ function filmPage({ alone = false, duration = 10 } = {}) {
     film: { ...(duration == null ? {} : { duration }), width: 320, height: 180, ready: Promise.resolve(), frame: alone ? (t) => held(t) : () => {} },
     ...(alone ? {} : { __filmEditor: { watch: held, update: async () => true } }),
   };
-  const parent = { postMessage: (m) => said.push(m) };
+  const location = { origin: 'http://localhost:4793', search: sameOriginWeb ? '?load=1' : '' };
+  const parent = { postMessage: (m) => said.push(m), ...(sameOriginWeb ? { location: { origin: location.origin } } : {}) };
   const performance = { now: () => now, timeOrigin: 1_700_000_000_000 };
   const requestAnimationFrame = (fn) => { frames.set(++ids, fn); return ids; };
   const cancelAnimationFrame = (id) => frames.delete(id);
-  runInNewContext(BRIDGE.replaceAll('__EDITOR__', JSON.stringify(EDITOR)), { window, parent, location: { origin: 'http://localhost:4793' }, setTimeout, clearTimeout, Promise, performance, requestAnimationFrame, cancelAnimationFrame });
+  runInNewContext(BRIDGE.replaceAll('__EDITOR__', JSON.stringify(EDITOR)), { window, parent, location, setTimeout, clearTimeout, Promise, performance, requestAnimationFrame, cancelAnimationFrame });
   const send = (data) => listeners.get('message')({ origin: EDITOR, data: { source: 'openfilm-studio', ...data } });
   const settle = () => new Promise((r) => setTimeout(r, 10));
   /** The screen refreshes `ms` from now: the frame callbacks waiting run, then the draws they start settle. */
@@ -43,6 +44,14 @@ function filmPage({ alone = false, duration = 10 } = {}) {
   };
   return { send, said, drawn, settle, refresh, clock: () => now };
 }
+
+
+test('the pure-Web outer timeline frame speaks to its same-origin editor when ?load= marks it', async () => {
+  const page = filmPage({ sameOriginWeb: true });
+  await page.settle();
+  await page.settle();
+  assert.equal(page.said.find((message) => message.type === 'ready')?.duration, 10, JSON.stringify(page.said));
+});
 
 test('an edit changed in place while the first moment is still drawing is drawn at that moment, not at 0 s', async () => {
   const page = filmPage();

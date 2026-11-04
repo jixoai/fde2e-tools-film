@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
+await import('./vendor-examples.mjs'); // local examples: pinned vendor bytes + manifests before Vite watches
 const DEV = join(ROOT, '.dev');
 /* the official skills from a checkout of openfilm/skills beside this repository, when there is one, so a change to a
    skill shows at once; without one, the copy this package releases */

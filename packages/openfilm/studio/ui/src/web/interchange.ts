@@ -12,7 +12,7 @@
  * writer here is ~80 lines and the reader needs inflate only for foreign zips, via the browser's
  * own DecompressionStream('deflate-raw'). Chromium only, like the rest of the web face.
  */
-import { createProject, getProject, listFiles, putFile, readFilm, readFileBytes, filmRev } from './opfs/index.ts';
+import { createProjectFromFiles, getProject, listFiles, readFilm, readFileBytes, filmRev } from './opfs/index.ts';
 
 export const MANIFEST = 'manifest.film.json';
 export const PACKAGE_KIND = 'fde2e-film-project';
@@ -200,11 +200,10 @@ export async function verifyPackage(entries: readonly PackageEntry[]): Promise<P
     names itself), every file put. Answers it. */
 export async function importPackage(entries: readonly PackageEntry[], name?: string): Promise<{ id: string; name: string }> {
   const manifest = await verifyPackage(entries);
-  const project = await createProject((name ?? '').trim() || manifest.name);
-  for (const f of manifest.files) {
-    const e = entries.find((x) => x.path === f.path);
-    if (e) await putFile(project.id, f.path, e.bytes);
-  }
+  const project = await createProjectFromFiles((name ?? '').trim() || manifest.name, manifest.files.map((file) => {
+    const entry = entries.find((candidate) => candidate.path === file.path)!;
+    return { path: file.path, data: entry.bytes };
+  }));
   return { id: project.id, name: project.name };
 }
 

@@ -11,6 +11,9 @@
  *   POST /api/projects/:id/locate { path } → { project }
  */
 
+import { isWeb } from '../web/backend.ts';
+import { listBundledExamples } from '../web/examples.ts';
+
 export type BrowseFolder = { name: string; path: string; film: boolean };
 export type BrowseListing = {
   path: string;
@@ -114,9 +117,14 @@ export const sourcesApi = {
   startFetch: (url: string) => call<{ job: FetchJob }>('projects/fetch', 'POST', { url }).then((r) => r.job),
   fetchJob: (id: string) => call<{ job: FetchJob }>(`projects/fetch/${encodeURIComponent(id)}`).then((r) => r.job),
   cancelFetch: (id: string) => call<object>(`projects/fetch/${encodeURIComponent(id)}`, 'DELETE'),
-  examples: () => call<{ examples: Example[] }>('examples').then((r) => (seen.examples = r.examples), () => seen.examples ?? []),
+  examples: () => (isWeb()
+    ? listBundledExamples()
+    : call<{ examples: Example[] }>('examples').then((r) => r.examples))
+    .then((examples) => (seen.examples = examples), () => seen.examples ?? []),
   /** an example's folder on this computer, fetched when needed (for an agent to read how it is made) */
-  exampleFolder: (id: string) => call<{ folder: string }>(`examples/${encodeURIComponent(id)}/folder`, 'POST').then((r) => r.folder),
+  exampleFolder: (id: string) => isWeb()
+    ? Promise.reject(new SourceError('bundled examples live inside their loaded OPFS project', 501, 'web-example'))
+    : call<{ folder: string }>(`examples/${encodeURIComponent(id)}/folder`, 'POST').then((r) => r.folder),
   skills: (projectId?: string | null) => call<{ skills: SkillEntry[] }>(`skills${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`)
     .then((r) => { seen.skills.set(projectId ?? '', r.skills); return r.skills; }, () => seenSkills(projectId) ?? []),
   setSkillCover: async (name: string, cover: string | null, projectId?: string | null): Promise<string | null> => {

@@ -6,3 +6,5 @@
 *.mp3 binary
 *.mp4 binary
 *.woff2 binary
+*.ttf binary
+*.wasm binary

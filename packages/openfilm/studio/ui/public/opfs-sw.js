@@ -24,6 +24,41 @@ const kindOf = (name) => {
   return 'application/octet-stream';
 };
 
+
+const fileResponse = (request, bytes, type) => {
+  const size = bytes.byteLength;
+  const range = request.headers.get('range');
+  let start = 0;
+  let end = Math.max(0, size - 1);
+  let status = 200;
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!match || size === 0) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } });
+    if (!match[1] && match[2]) {
+      const length = Math.min(Number(match[2]), size);
+      start = size - length;
+    } else {
+      start = Number(match[1] || 0);
+      end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
+    }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= size) {
+      return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } });
+    }
+    status = 206;
+  }
+  const body = request.method === 'HEAD' ? null : bytes.slice(start, end + 1);
+  return new Response(body, {
+    status,
+    headers: {
+      'accept-ranges': 'bytes',
+      'content-length': String(end - start + 1),
+      'content-type': type,
+      'cache-control': 'no-store',
+      ...(status === 206 ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}),
+    },
+  });
+};
+
 async function readBytes(id, parts) {
   const base = await navigator.storage.getDirectory();
   let at;
@@ -47,6 +82,21 @@ self.addEventListener('activate', (event) => { event.waitUntil(self.clients.clai
    draws the film and the picture-area editing waits. `__film/*` (the timeline itself) is served
    from the static build (public/__film/, emitted by studio/ui/scripts/emit-film-runtime.mjs). */
 const HOST_FLAG = `window.filmHost={version:'0.1',name:'film'};`;
+const PAGE_SCALE = `(()=>{try{if(parent===window)return;const k=Number(new URL(parent.location.href).searchParams.get('film-dpr'));if(k>0)Object.defineProperty(window,'devicePixelRatio',{configurable:true,get:()=>k})}catch{}})();`;
+const editorScripts = async (origin, withStage) => {
+  /* Do not retain these across navigations: an already-active worker must pick up a newly deployed
+     bridge/stage even when its own source did not change. */
+  const read = (name) => fetch(new URL(`/__film/${name}`, origin), { cache: 'no-store' }).then((response) => {
+    if (!response.ok) throw new Error(`missing Film runtime ${name}`);
+    return response.text();
+  });
+  const [bridge, stage] = await Promise.all([read('bridge.js'), ...(withStage ? [read('stage.js')] : [])]);
+  return {
+    bridge: bridge.replaceAll('__EDITOR__', JSON.stringify(origin)),
+    stage: stage?.replaceAll('__EDITOR__', JSON.stringify(origin)) ?? '',
+  };
+};
+const script = (text) => `<script>${text}</script>`;
 const FILM_START = (stage) => `<style>html,body{margin:0;overflow:hidden}:where(body){background:#000}`
   + `body>section{display:contents}body>section>:is(iframe,video,img,audio){position:absolute;left:0;top:0;margin:0;visibility:hidden}`
   + `body>section>iframe{border:0;width:${stage.w}px;height:${stage.h}px}:where(body>section>:is(video,img)){object-fit:contain}</style>`
@@ -82,23 +132,23 @@ self.addEventListener('fetch', (event) => {
     }
     const name = parts[parts.length - 1];
     const isFilm = name === 'film.html';
-    /* only a preview frame (`?load=`, Preview.tsx) gets the runtime injected: the editor reads the
-       film's own text through api.film — an injected copy would pollute the format's reader */
-    const inject = isFilm && url.searchParams.has('load') && url.searchParams.get('film-host') !== '0';
-    if (inject) {
+    const isHtml = /\.html?$/i.test(name);
+    const injectFilm = event.request.method === 'GET' && isFilm && url.searchParams.has('load') && url.searchParams.get('film-host') !== '0';
+    const injectPage = event.request.method === 'GET' && isHtml && !isFilm && url.searchParams.get('film-host') !== '0';
+    if (injectFilm || injectPage) {
       const bytes = await readBytes(id, parts);
       if (bytes === null) return new Response('Not found in this project', { status: 404 });
       const html = new TextDecoder().decode(bytes);
-      const stage = stageOf(html);
-      const injected = injectFirst(injectFirst(html, FILM_START(stage)), `<script>${HOST_FLAG}</script>`);
-      return new Response(injected, {
-        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
-      });
+      const runtime = await editorScripts(url.origin, injectFilm);
+      const prefix = injectFilm
+        ? script(HOST_FLAG) + script(runtime.bridge) + script(runtime.stage) + FILM_START(stageOf(html))
+        : script(HOST_FLAG + PAGE_SCALE) + script(runtime.bridge);
+      const injected = injectFirst(html, prefix);
+      const body = new TextEncoder().encode(injected).buffer;
+      return fileResponse(event.request, body, 'text/html; charset=utf-8');
     }
     const bytes = await readBytes(id, parts);
     if (bytes === null) return new Response('Not found in this project', { status: 404 });
-    return new Response(bytes, {
-      headers: { 'content-type': kindOf(name), 'cache-control': 'no-store' },
-    });
+    return fileResponse(event.request, bytes, kindOf(name));
   })());
 });

@@ -36,6 +36,7 @@ test('guardrail annotations: read-only where promised, consequential on delete',
   }
   assert.equal(byName.get('projects_delete')?.annotations?.consequentialHint, true);
   assert.equal(byName.get('projects_delete')?.annotations?.readOnlyHint, false);
+  assert.equal(byName.get('projects_load_example')?.annotations?.readOnlyHint, false);
   assert.equal(byName.get('edit_apply')?.annotations?.readOnlyHint, false);
 });
 

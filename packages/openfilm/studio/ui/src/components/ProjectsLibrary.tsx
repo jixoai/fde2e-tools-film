@@ -283,7 +283,7 @@ export function ProjectsPopover({
   const [busy, setBusy] = React.useState<'creating' | 'opening' | null>(null);
   /* Studio's folder browser (no app to pick folders), "Get from GitHub", and a folder without a film to start one in */
   const [browser, setBrowser] = React.useState<{ mode: 'open' } | { mode: 'locate'; project: LibraryProject } | null>(null);
-  const [github, setGithub] = React.useState<{ url?: string; start?: boolean; title?: string } | null>(null);
+  const [github, setGithub] = React.useState<{ url?: string; start?: boolean; exampleId?: string; title?: string } | null>(null);
   const [askStart, setAskStart] = React.useState<string | null>(null);
   const close = React.useCallback(() => onClose?.(), [onClose]);
 
@@ -548,7 +548,7 @@ export function ProjectsPopover({
               mode="start"
               heading={<LauncherSwitch view={view} onView={showView} />}
               onClose={onClose}
-              onStart={(example) => setGithub({ url: example.url, start: true, title: example.title })}
+              onStart={(example) => setGithub({ url: example.url, start: true, exampleId: example.id, title: example.title })}
             />
           ) : lib.loaded ? (
             <ProjectCoverContext.Provider value={cover.actions}>
@@ -648,6 +648,7 @@ export function ProjectsPopover({
         <GitHubDialog
           url={github.url}
           start={github.start}
+          exampleId={github.exampleId}
           title={github.title}
           onDone={(projectId) => { setGithub(null); go(projectId, 'opening'); }}
           onClose={() => setGithub(null)}

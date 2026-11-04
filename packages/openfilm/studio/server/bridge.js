@@ -29,7 +29,11 @@
 (() => {
   /* a page inside the timeline page (a clip of the film) has the film's own page for parent, not the editor: it says
      nothing (a message to the editor's origin would only be refused) */
-  try { if (parent !== window && parent.location.origin === location.origin) return; } catch { /* the parent is the editor */ }
+  try {
+    /* The pure-Web editor serves its outer timeline frame on the same origin and marks it with
+       `?load=`. Nested page clips are same-origin too but have no marker and must stay quiet. */
+    if (parent !== window && parent.location.origin === location.origin && !/(?:^|[?&])load=/.test(location.search ?? '')) return;
+  } catch { /* the parent is the editor on the server face's other origin */ }
   const EDITOR = __EDITOR__;
   const post = (message) => parent.postMessage({ source: 'openfilm-film', ...message }, EDITOR);
   const fail = (error) => post({ type: 'error', message: String(error?.message ?? error ?? 'the film failed') });

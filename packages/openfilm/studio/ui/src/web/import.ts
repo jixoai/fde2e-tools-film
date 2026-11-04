@@ -1,10 +1,10 @@
 /**
  * The web face's ways in (design D3): a film's text arrives by drag, paste, a URL, or an inject
  * event from the browser bridge — all four land in one place, `importFilmText`, which makes the
- * project (the store's `createProject` + first `writeFilm`) and answers it, ready to open. The
+ * project through the store's atomic project importer and answers it, ready to open. The
  * caller says what to do next; here only "a project now holds this film".
  */
-import { createProject, writeFilm, putFile } from './opfs/index.ts';
+import { createProjectFromFiles } from './opfs/index.ts';
 import type { StoreProject } from './opfs';
 
 export type FilmShape = 'film' | 'page' | 'other';
@@ -43,15 +43,11 @@ const stageOfPage = (text: string): { w: number; h: number } => {
     its text kept as `imported.html`, the film plays it full stage). Answers the project. */
 export async function importFilmText(text: string, name?: string): Promise<StoreProject> {
   const shape = filmShapeOf(text);
-  const project = await createProject(name);
   const filmText = shape === 'page' ? filmForPage(stageOfPage(text).w, stageOfPage(text).h) : text;
-  if (shape === 'page') {
-    const page = await putFile(project.id, 'imported.html', new Blob([text]));
-    void page;
-  }
-  const written = await writeFilm(project.id, filmText, null);
-  if (written === null) throw new Error('the new project moved on before its film was written');
-  return project;
+  return createProjectFromFiles(name, [
+    { path: 'film.html', data: filmText },
+    ...(shape === 'page' ? [{ path: 'imported.html', data: text }] : []),
+  ]);
 }
 
 /** A film fetched from an address (fail-open: CORS or the network refusing is the answer, said by

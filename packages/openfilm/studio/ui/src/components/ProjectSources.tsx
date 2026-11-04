@@ -317,25 +317,29 @@ function FetchProgress({ job }: { job: FetchJob | null }) {
 export function GitHubDialog({
   url: initialUrl = '',
   start = false,
+  exampleId,
   title,
   onDone,
   onClose,
 }: {
   url?: string;
   start?: boolean;
+  /** a bundled web example; the server face ignores this and follows `url` */
+  exampleId?: string;
   /** what is being got, when it is known (an example's title) */
   title?: string;
   onDone: (projectId: string) => void;
   onClose: () => void;
 }) {
   const t = useT();
-  const example = start && !!initialUrl;
+  const example = start && (!!initialUrl || !!exampleId);
   const [url, setUrl] = React.useState(initialUrl);
   const [job, setJob] = React.useState<FetchJob | null>(null);
   /* asked to start, no answer yet */
   const [starting, setStarting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const follow = React.useRef<ReturnType<typeof followFetch> | null>(null);
+  const bundledAbort = React.useRef<AbortController | null>(null);
   /* which fetch is the current one: a cancelled one's late answers are let go */
   const run = React.useRef(0);
   const running = starting || job?.state === 'running';
@@ -351,6 +355,21 @@ export function GitHubDialog({
     setError(null);
     setJob(null);
     setStarting(true);
+    if (isWeb() && exampleId) {
+      const abort = new AbortController();
+      bundledAbort.current = abort;
+      try {
+        const { loadBundledExample } = await import('../web/examples.ts');
+        const project = await loadBundledExample(exampleId, { signal: abort.signal });
+        if (current()) onDone(project.id);
+      } catch (e) {
+        if (current() && !(e instanceof DOMException && e.name === 'AbortError')) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (bundledAbort.current === abort) bundledAbort.current = null;
+        if (current()) setStarting(false);
+      }
+      return;
+    }
     if (isWeb() && !looksLikeRepoUrl(address.trim())) {
       /* a bare address: the film comes straight from it (D3), nothing proxied */
       try {
@@ -388,13 +407,15 @@ export function GitHubDialog({
     } finally {
       if (current()) setStarting(false);
     }
-  }, [onDone, say]);
+  }, [exampleId, onDone, say, t]);
 
   /* closed or gone while it runs: it is stopped (a half-fetched copy is never left) */
   const latest = React.useRef<FetchJob | null>(null);
   latest.current = job;
   const stop = React.useCallback(() => {
     run.current += 1;
+    bundledAbort.current?.abort();
+    bundledAbort.current = null;
     follow.current?.stop();
     const current = latest.current;
     if (current?.state === 'running') void sourcesApi.cancelFetch(current.id).catch(() => {});
