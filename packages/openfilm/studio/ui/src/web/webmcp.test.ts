@@ -21,22 +21,24 @@ test('four families present with their tools', () => {
       'edit_write_page', 'edit_read_page', 'edit_list_versions', 'edit_save_version',
       'edit_checkout_version', 'edit_discard_changes', 'edit_copy_version',
     ],
-    projects: ['projects_list', 'projects_create', 'projects_open', 'projects_delete', 'projects_export_package', 'projects_load_example'],
+    projects: ['projects_list', 'projects_list_media', 'projects_import_media', 'projects_create', 'projects_open', 'projects_delete', 'projects_export_package', 'projects_load_example'],
     produce: ['produce_look', 'produce_render', 'produce_export_status'],
   };
   for (const tools of Object.values(families)) {
     for (const name of tools) assert.ok(byName.has(name), `missing tool: ${name}`);
   }
-  assert.equal(defs.length, 33); // 13 four-family tools + 20 edit-family verbs
+  assert.equal(defs.length, 35); // 15 four-family tools + 20 edit-family verbs
 });
 
 test('guardrail annotations: read-only where promised, consequential on delete', () => {
-  for (const name of ['film_state', 'film_problems', 'film_overrides', 'projects_list', 'projects_export_package', 'produce_export_status']) {
+  for (const name of ['film_state', 'film_problems', 'film_overrides', 'projects_list', 'projects_list_media', 'projects_export_package', 'produce_export_status']) {
     assert.equal(byName.get(name)?.annotations?.readOnlyHint, true, `${name} should be read-only`);
   }
   assert.equal(byName.get('projects_delete')?.annotations?.consequentialHint, true);
   assert.equal(byName.get('projects_delete')?.annotations?.readOnlyHint, false);
   assert.equal(byName.get('projects_load_example')?.annotations?.readOnlyHint, false);
+  assert.equal(byName.get('projects_import_media')?.annotations?.readOnlyHint, false);
+  assert.equal(byName.get('projects_import_media')?.annotations?.untrustedContentHint, true);
   assert.equal(byName.get('edit_apply')?.annotations?.readOnlyHint, false);
 });
 

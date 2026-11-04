@@ -8,7 +8,7 @@
  * 断言面（T10/03 §2 按本仓 4.1/4.2 已落地部分裁剪）：
  * 1. **OT 门回归**：无 flag 启动时 document.modelContext 必须缺席（Chrome 默认不开；
  *    某天变红＝Chrome 转正，更新文档，属预期告警）。
- * 2. **原生路径**（--enable-blink-features=WebMCP）：33 工具枚举齐套；annotations
+ * 2. **原生路径**（--enable-blink-features=WebMCP）：35 工具枚举齐套；annotations
  *    逐工具对表（L0 只读必须 readOnlyHint:true；L2 必须 consequentialHint:true）；
  *    名字正则；getTools 无重名。
  * 3. **项目族全链**：create → open → edit 写入 → save_version → list_versions →
@@ -51,7 +51,7 @@ const EXPECT = {
       "edit_write_page", "edit_read_page",
       "edit_list_versions", "edit_save_version", "edit_checkout_version", "edit_discard_changes", "edit_copy_version",
       // projects
-      "projects_list", "projects_create", "projects_open", "projects_delete",
+      "projects_list", "projects_list_media", "projects_import_media", "projects_create", "projects_open", "projects_delete",
       "projects_export_package", "projects_load_example",
       // produce
       "produce_look", "produce_render", "produce_export_status",
@@ -62,11 +62,11 @@ const EXPECT = {
 /** 护栏对表（L0 只读必须 readOnlyHint:true；破坏性必须 consequentialHint:true）。 */
 const GUARDRAIL = {
   readOnly: ["film_state", "film_problems", "film_overrides", "edit_read_page", "edit_list_versions",
-    "projects_list", "projects_export_package", "produce_look", "produce_render", "produce_export_status"],
+    "projects_list", "projects_list_media", "projects_export_package", "produce_look", "produce_render", "produce_export_status"],
   consequential: ["edit_restore_overrides", "edit_write_page", "edit_checkout_version", "edit_discard_changes", "projects_delete"],
   mutation: ["edit_apply", "edit_move_clip", "edit_remove_clip", "edit_insert_clip", "edit_split_clip", "edit_trim_clip",
     "edit_set_speed", "edit_set_volume", "edit_set_box", "edit_set_props", "edit_set_track", "edit_reorder_tracks",
-    "edit_set_stage", "edit_save_version", "edit_copy_version", "projects_create", "projects_open", "projects_load_example"],
+    "edit_set_stage", "edit_save_version", "edit_copy_version", "projects_create", "projects_open", "projects_load_example", "projects_import_media"],
 };
 
 const NAME_RE = /^[a-zA-Z0-9_.-]{1,128}$/;
@@ -219,6 +219,19 @@ async function assertFullChain(browser) {
     if (!opened.ok) throw new Error(`projects_open: ${JSON.stringify(opened)}`);
     await page.waitForTimeout(400);
 
+    // ── 5.2 被动接料：base64 直入 OPFS；URL 白单在页面边界 fail-closed ──
+    const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+X9fWAAAAAElFTkSuQmCC";
+    const importedMedia = await call(page, "projects_import_media", { dataBase64: pixel, name: "agent-pixel.png", mime: "image/png" });
+    if (!importedMedia.ok || importedMedia.path !== "assets/agent-pixel.png" || importedMedia.kind !== "image") {
+      throw new Error(`projects_import_media(base64): ${JSON.stringify(importedMedia)}`);
+    }
+    const mediaList = await call(page, "projects_list_media", {});
+    if (!mediaList.files?.some((file) => file.path === importedMedia.path && file.size > 0)) {
+      throw new Error(`projects_list_media missing intake: ${JSON.stringify(mediaList)}`);
+    }
+    const rejectedUrl = await call(page, "projects_import_media", { url: "https://evil.example/pixel.png" });
+    if (!rejectedUrl.error || rejectedUrl.code !== "url-host") throw new Error(`URL allowlist did not close: ${JSON.stringify(rejectedUrl)}`);
+
     // ── edit 链 ──
     const ins = await call(page, "edit_insert_clip", { src: "assets/gate.html", at: 0, time: [0, 2] });
     if (!ins.ok) throw new Error(`edit_insert_clip: ${JSON.stringify(ins)}`);
@@ -335,10 +348,10 @@ async function assertFullChain(browser) {
     const exampleDel = await call(page, "projects_delete", { id: example.id });
     if (!exampleDel.ok) throw new Error(`example cleanup: ${JSON.stringify(exampleDel)}`);
 
-    return { createdId: created.id, exampleId: example.id, editCount: 10 };
+    return { createdId: created.id, exampleId: example.id, mediaPath: importedMedia.path, editCount: 10 };
   });
   if (errors.length) throw new Error(`页面错误 ${errors.length}: ${errors[0]}`);
-  record(`[项目族] create→open→insert→split(两半相接,${out.createdId ? "x-b 契约" : ""})→trim→版本层→页读写→包(zip 魔数)→reload→delete；load_example(${out.exampleId}) notice/OFL/AI 标识全链`, true);
+  record(`[项目族] create→open→insert→split(两半相接,${out.createdId ? "x-b 契约" : ""})→trim→版本层→页读写→包(zip 魔数)→reload→delete；load_example(${out.exampleId}) notice/OFL/AI 标识；media(base64→${out.mediaPath}/URL 白单拒绝)全链`, true);
   record("[edit 链] 负面护栏（speed=0 人话拒/gone clip 拒/锁定轨拒）＋非法矩阵 9 例 ok:false 不 reject", true);
   record("[produce] 未接线工具如实答 unavailable（不谎报成功）＋export_status 答环境能力", true);
 }
@@ -410,7 +423,7 @@ async function main() {
     console.log(`${r.ok ? "✓" : "✗"} ${r.name}${r.ok ? "" : " → " + r.extra}`);
   }
   if (failed) process.exit(1);
-  console.log("全绿：33 工具枚举齐＋护栏对表＋OT 门＋项目/edit 全链（含负面与非法矩阵）＋包真下载魔数＋OPFS 持久化＋polyfill 冒烟");
+  console.log("全绿：35 工具枚举齐＋护栏对表＋OT 门＋项目/edit 全链（含负面与非法矩阵）＋包真下载魔数＋OPFS 持久化＋polyfill 冒烟");
 }
 
 main();

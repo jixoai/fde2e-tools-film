@@ -119,7 +119,9 @@ const injectFirst = (html, fragment) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  const segs = url.pathname.split('/').filter(Boolean);
+  let segs;
+  try { segs = url.pathname.split('/').filter(Boolean).map((part) => decodeURIComponent(part)); } catch { return; }
+  if (segs.some((part) => !part || part === '.' || part === '..' || part.includes('/') || part.includes('\\') || part.includes('\0'))) return;
   const at = segs.indexOf(PREFIX);
   if (at === -1) return;
   const [id, ...parts] = segs.slice(at + 1);

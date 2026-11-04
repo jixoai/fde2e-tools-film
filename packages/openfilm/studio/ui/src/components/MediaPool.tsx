@@ -76,6 +76,7 @@ import { retryImage } from '@/lib/retry-image';
 import { boxBetween, boxHits, boxPick, moveTargets, pickItem, type Box } from '@/lib/media-selection';
 import { barLayout, type BarWords } from '@/lib/media-bar';
 import { byName, folderFaces } from '@/lib/media-folders';
+import { MediaUrlDialog } from './MediaUrlDialog';
 
 type Filter = 'all' | 'video' | 'image' | 'audio' | 'page' | 'other';
 type SortKey = 'name' | 'time' | 'duration' | 'type';
@@ -136,6 +137,8 @@ export interface MediaPoolProps {
    * failed, please retry").
    */
   onImport: (files: File[], folder: string, onProgress: ImportProgress) => Promise<unknown>;
+  /** Copy a CORS-readable allowlisted URL into this project folder; absent where URL intake is unavailable. */
+  onImportUrl?: (url: string, name: string | undefined, folder: string) => Promise<unknown>;
   /** Rename or move a file or folder (project-relative `from` → `to`); its clips follow. */
   onMove: (from: string, to: string) => Promise<MediaResult>;
   /**
@@ -204,6 +207,7 @@ export function MediaPool({
   selectedPath,
   onSelectFile,
   onImport,
+  onImportUrl,
   onMove,
   onMoveCheck,
   onDelete,
@@ -242,6 +246,7 @@ export function MediaPool({
   const [confirm, setConfirm] = React.useState<{ targets: { path: string; folder: boolean }[]; name: string } | null>(null);
   const [uploads, setUploads] = React.useState<Upload[]>([]);
   const [notice, setNotice] = React.useState<string | null>(null);
+  const [urlOpen, setUrlOpen] = React.useState(false);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
   const [osDrag, setOsDrag] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -605,14 +610,19 @@ export function MediaPool({
   ];
   /* what Upload offers: a copy in the project, or a link to where the media is kept (a NAS, another disk); where
      nothing is linked (Saved), Upload picks the files to copy in at once */
+  const chooseFiles = () => { if (onPick && onBring) void bringFrom('copy', false); else inputRef.current?.click(); };
   const importMenu: ContextMenuEntry[] = [
-    { id: 'import', label: t('media.importFiles'), note: t('media.importFilesNote'), icon: <Upload size={14} />, onSelect: () => { void bringFrom('copy', false); } },
-    { id: 'link', label: t('media.linkFiles'), note: t('media.linkFilesNote'), icon: <Link2 size={14} />, onSelect: () => { void bringFrom('link', false); } },
-    { id: 'link-folder', label: t('media.linkFolder'), icon: <FolderSymlink size={14} />, onSelect: () => { void bringFrom('link', true); } },
+    { id: 'import', label: t('media.importFiles'), note: t('media.importFilesNote'), icon: <Upload size={14} />, onSelect: chooseFiles },
+    ...(onImportUrl ? [{ id: 'import-url', label: t('media.importUrl'), note: t('media.importUrlNote'), icon: <Link2 size={14} />, onSelect: () => window.setTimeout(() => setUrlOpen(true), 0) }] : []),
+    ...(onPick && onBring && links ? [
+      { id: 'link', label: t('media.linkFiles'), note: t('media.linkFilesNote'), icon: <Link2 size={14} />, onSelect: () => { void bringFrom('link', false); } },
+      { id: 'link-folder', label: t('media.linkFolder'), icon: <FolderSymlink size={14} />, onSelect: () => { void bringFrom('link', true); } },
+    ] : []),
   ];
   const blankMenu: ContextMenuEntry[] = [
     { id: 'new-folder', label: t('assets.newFolder'), icon: <FolderPlus size={14} />, onSelect: () => setCreating(true) },
-    { id: 'import', label: t('media.import'), icon: <Plus size={14} />, onSelect: () => (onPick && onBring ? void bringFrom('copy', false) : inputRef.current?.click()) },
+    { id: 'import', label: t('media.import'), icon: <Plus size={14} />, onSelect: chooseFiles },
+    ...(onImportUrl ? [{ id: 'import-url', label: t('media.importUrl'), icon: <Link2 size={14} />, onSelect: () => window.setTimeout(() => setUrlOpen(true), 0) }] : []),
     ...(onPick && onBring && links ? [
       { id: 'link', label: t('media.linkFiles'), icon: <Link2 size={14} />, onSelect: () => { void bringFrom('link', false); } },
       { id: 'link-folder', label: t('media.linkFolder'), icon: <FolderSymlink size={14} />, onSelect: () => { void bringFrom('link', true); } },
@@ -864,8 +874,8 @@ export function MediaPool({
         )}
         {/* bringing media in is what this pane is for: the one labeled button, right after the search */}
         <Tooltip label={t('media.import')} side="bottom">
-          <button type="button" aria-label={t('media.import')} aria-haspopup={onPick && onBring ? 'menu' : undefined}
-            onClick={(e) => (onPick && onBring ? (links ? barMenu(e, importMenu) : void bringFrom('copy', false)) : inputRef.current?.click())}
+          <button type="button" aria-label={t('media.import')} aria-haspopup={importMenu.length > 1 ? 'menu' : undefined}
+            onClick={(e) => (importMenu.length > 1 ? barMenu(e, importMenu) : chooseFiles())}
             className={`flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md bg-[var(--bg-active)] text-[12.5px] font-medium text-[var(--text)] transition hover:bg-[var(--border-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border-strong)] ${bar.uploadWord ? 'px-2.5' : 'w-7'}`}>
             <Upload size={13} strokeWidth={2.2} />
             {bar.uploadWord ? uploadWord : null}
@@ -888,7 +898,7 @@ export function MediaPool({
         })))}><ArrowUpDown size={14} /></BarButton>
         <BarButton label={t('assets.newFolder')} onClick={() => { setQuery(''); setView((v) => ({ ...v, filter: 'all' })); setCreating(true); }}><FolderPlus size={14} /></BarButton>
         {/* any kind of file: what Studio cannot play is still the project's material */}
-        <input ref={inputRef} type="file" multiple className="hidden"
+        <input ref={inputRef} type="file" multiple data-film-media-input="" className="hidden"
           onChange={(e) => { const list = [...(e.target.files ?? [])]; e.target.value = ''; void importFiles(list); }} />
       </div>
 
@@ -1031,6 +1041,16 @@ export function MediaPool({
         </div>
       ) : null}
       {menu ? <ContextMenu x={menu.x} y={menu.y} flipTo={menu.flipTo} items={menu.items} onClose={() => { setMenu(null); menuFrom.current = null; }} dense={menu.dense} trigger={menuFrom} /> : null}
+      {onImportUrl ? (
+        <MediaUrlDialog
+          open={urlOpen}
+          onOpenChange={setUrlOpen}
+          onImport={async (url, name) => {
+            await onImportUrl(url, name, folderPath(at));
+            setNotice(t('media.imported').replace('{n}', '1'));
+          }}
+        />
+      ) : null}
       <ConfirmDialog
         open={moveAsk != null}
         title={t('media.moveAskTitle')}

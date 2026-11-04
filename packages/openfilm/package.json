@@ -69,7 +69,8 @@
     "vendor-ffmpeg": "node scripts/vendor-ffmpeg.mjs",
     "vendor-examples": "node scripts/vendor-examples.mjs",
     "preview:web": "node scripts/web-static-server.mjs",
-    "examples-check": "node scripts/examples-check.mjs"
+    "examples-check": "node scripts/examples-check.mjs",
+    "media-intake-check": "node scripts/media-intake-check.mjs"
   },
   "devDependencies": {
     "@fontsource-variable/inter": "^5.3.0",

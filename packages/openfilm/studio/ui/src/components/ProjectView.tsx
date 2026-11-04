@@ -11,6 +11,7 @@ import { BookmarkPlus, ClipboardCopy, ClipboardPaste, GalleryVerticalEnd, Layers
 import { applyOps } from '../../../server/ops.mjs';
 import * as store from '../web/opfs';
 import { isWeb, web } from '../web/backend';
+import { importMediaUrl, importProjectBinary, probeWebMedia } from '../web/media-intake';
 import { api, ApiError, PREFS_EVENT, projectEvents, type Clip, type Film, type Listing, type Op, type ProjectFilm, type ProjectSettings } from '@/api';
 import { useT } from '@/i18n';
 import { useFilm, type OutsideStep, type Step } from '@/editor/use-film';
@@ -321,17 +322,21 @@ export function ProjectView({ projectId, onProject, onLeave }: {
   React.useEffect(() => {
     if (!rawListing) return;
     const wanted = [
-      ...rawListing.files.filter((f) => f.kind === 'video' || f.kind === 'image' || f.kind === 'audio').map((f) => ({ f, page: false })),
+      ...rawListing.files.filter((f) => f.kind === 'video' || f.kind === 'image' || f.kind === 'audio')
+        .map((f) => ({ f, page: false, kind: f.kind })),
       /* pages: the project's, and any put in a folder of the media pane */
-      ...[...rawListing.pages, ...rawListing.files.filter((f) => f.kind === 'page')].map((f) => ({ f, page: true })),
+      ...[...rawListing.pages, ...rawListing.files.filter((f) => f.kind === 'page')]
+        .map((f) => ({ f, page: true, kind: 'page' as const })),
     ];
-    for (const { f, page } of wanted) {
+    for (const { f, page, kind } of wanted) {
       const key = `${f.path}@${f.mtime}`;
       if (probed.current.has(key)) continue;
       probed.current.add(key);
-      void mediaFetch(`/api/projects/${encodeURIComponent(projectId)}/media?what=probe&path=${encodeURIComponent(f.path)}&v=${f.mtime}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((probe) => {
+      const probeRequest = isWeb()
+        ? probeWebMedia(projectId, f.path, kind)
+        : mediaFetch(`/api/projects/${encodeURIComponent(projectId)}/media?what=probe&path=${encodeURIComponent(f.path)}&v=${f.mtime}`)
+          .then((r) => (r.ok ? r.json() : null));
+      void probeRequest.then((probe) => {
           if (!probe) return;
           const facts = {
             ...factsOfProbe(probe), audio: Boolean(probe.audio),
@@ -1572,6 +1577,7 @@ export function ProjectView({ projectId, onProject, onLeave }: {
       selectedPath={pickedSaved ? null : pickedMedia?.path ?? null}
       onSelectFile={pickMedia}
       onImport={onImport}
+      {...(isWeb() ? { onImportUrl } : {})}
       onMove={onMove}
       onMoveCheck={onMoveCheck}
       onDelete={onDelete}
@@ -1580,8 +1586,7 @@ export function ProjectView({ projectId, onProject, onLeave }: {
       onNewFolder={onNewFolder}
       onDropClips={dropClipsForAssets}
       onReveal={reveal}
-      onPick={onPick}
-      onBring={onBring}
+      {...(isWeb() ? {} : { onPick, onBring })}
       onRelink={onRelink}
       onCollect={onCollect}
       onSave={saveFiles}
@@ -2414,6 +2419,17 @@ export function ProjectView({ projectId, onProject, onLeave }: {
    */
   const onImport = React.useCallback(async (files: File[], into: string, onProgress: ImportProgress): Promise<string[]> => {
     const landed: string[] = [];
+    if (isWeb()) {
+      web();
+      for (const [i, file] of files.entries()) {
+        onProgress(i, 0);
+        // eslint-disable-next-line no-await-in-loop
+        const receipt = await importProjectBinary(projectId, file, into);
+        landed.push(receipt.path);
+        onProgress(i, 1, receipt.path);
+      }
+      return landed;
+    }
     /* in the app a dropped file's path is known: copied on this computer (cloned where the disk can: at once, and no
        more room taken), not sent through the page */
     const paths = files.map((file) => studioHost?.folders?.pathOf(file) ?? '');
@@ -2447,7 +2463,12 @@ export function ProjectView({ projectId, onProject, onLeave }: {
       onProgress(i, 1, body.path);
     }
     return landed;
-  }, [projectApi, t, toast, onBring]);
+  }, [projectApi, projectId, t, toast, onBring]);
+  const onImportUrl = React.useCallback(async (url: string, name: string | undefined, into: string) => {
+    if (!isWeb()) throw new Error('URL intake belongs to the pure-Web editor');
+    web();
+    return importMediaUrl(projectId, url, { name, folder: into });
+  }, [projectId]);
   pickReplacementRef.current = async (family) => {
     /* the system's dialog where there is one (the app, or Studio on this computer), else the browser's */
     const picked = await onPick(t('editorTools.replacePick'), false);
@@ -2475,9 +2496,11 @@ export function ProjectView({ projectId, onProject, onLeave }: {
     const kind = resourceKindOf(path);
     const base: ResourceDragItem = { path, name: path.slice(path.lastIndexOf('/') + 1), kind, dir: '', size: 0, mtimeMs: 0 };
     if (kind !== 'video' && kind !== 'image' && kind !== 'audio') return base;
-    const probe = await fetch(`${projectApi}/media?what=probe&path=${encodeURIComponent(path)}`).then((r) => (r.ok ? r.json() : null), () => null);
+    const probe = isWeb()
+      ? await probeWebMedia(projectId, path, kind).catch(() => null)
+      : await fetch(`${projectApi}/media?what=probe&path=${encodeURIComponent(path)}`).then((r) => (r.ok ? r.json() : null), () => null);
     return { ...base, ...factsOfProbe(probe) };
-  }, [projectApi]);
+  }, [projectApi, projectId]);
   /**
    * Import `files`, then insert them as `where` says (worked out from their real lengths), making room for them where
    * they land on a track with an edit mode: one step to undo.

@@ -144,6 +144,67 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
       },
     },
     {
+      name: 'projects_list_media',
+      title: 'List project media',
+      description: 'List every file already in a project’s media library, including its OPFS path, type and byte size. Read-only; use this to verify a passive intake before editing the timeline.',
+      inputSchema: jsonSchema({ projectId: { type: 'string', description: 'Project id; defaults to the open project' } }),
+      annotations: { readOnlyHint: true },
+      execute: async ({ projectId }) => {
+        const id = typeof projectId === 'string' && projectId ? projectId : currentProjectId();
+        if (!id) return say({ error: 'no project is open; provide projectId' });
+        try {
+          const listing = await (await api()).files(id);
+          return say({ projectId: id, files: [...listing.files, ...listing.pages].map((file) => ({
+            path: file.path, kind: 'kind' in file ? file.kind : 'page', size: file.size, mtime: file.mtime,
+          })) });
+        } catch (error) {
+          return say({ error: error instanceof Error ? error.message : String(error) });
+        }
+      },
+    },
+    {
+      name: 'projects_import_media',
+      title: 'Import media into a project',
+      description: 'Passive intake only: copy one allowlisted CORS URL or a base64 image/video/audio payload into OPFS assets. No provider is called and no credential is accepted. For large local/Omni artifacts, use the browser bridge upload command on Film’s file input instead.',
+      inputSchema: jsonSchema({
+        projectId: { type: 'string', description: 'Project id; defaults to the open project' },
+        url: { type: 'string', description: 'HTTPS media URL on images.pexels.com, cdn.pixabay.com or v3.fal.media' },
+        dataBase64: { type: 'string', description: 'Raw base64 or a base64 data URL (max 64 MiB decoded)' },
+        name: { type: 'string', description: 'File name. Required for dataBase64; optional for URL.' },
+        mime: { type: 'string', description: 'Declared media MIME for raw base64, such as image/png' },
+        folder: { type: 'string', description: 'Project folder under assets/ (default assets)' },
+      }),
+      annotations: { readOnlyHint: false, untrustedContentHint: true },
+      execute: async ({ projectId, url, dataBase64, name, mime, folder }, options) => {
+        const id = typeof projectId === 'string' && projectId ? projectId : currentProjectId();
+        if (!id) return say({ error: 'no project is open; provide projectId' });
+        const hasUrl = typeof url === 'string' && Boolean(url.trim());
+        const hasBase64 = typeof dataBase64 === 'string' && Boolean(dataBase64.trim());
+        if (hasUrl === hasBase64) return say({ error: 'provide exactly one of url or dataBase64' });
+        if (hasBase64 && (typeof name !== 'string' || !name.trim())) return say({ error: 'dataBase64 intake needs a file name' });
+        try {
+          const intake = await import('./media-intake.ts');
+          const receipt = hasUrl
+            ? await intake.importMediaUrl(id, String(url), {
+              name: typeof name === 'string' && name.trim() ? name : undefined,
+              folder: typeof folder === 'string' && folder ? folder : undefined,
+              signal: options.signal,
+            })
+            : await intake.importMediaBase64(id, String(dataBase64), {
+              name: String(name),
+              mime: typeof mime === 'string' ? mime : undefined,
+              folder: typeof folder === 'string' && folder ? folder : undefined,
+            });
+          return say({ ok: true, ...receipt });
+        } catch (error) {
+          return say({
+            error: error instanceof Error ? error.message : String(error),
+            ...((error as { code?: unknown })?.code ? { code: (error as { code: unknown }).code } : {}),
+          });
+        }
+      },
+    },
+    {
       name: 'projects_create',
       title: 'Create project',
       description: 'A new empty project (named, or Untitled). It does not open by itself; projects_open does.',
