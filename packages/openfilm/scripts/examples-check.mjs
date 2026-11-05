@@ -150,6 +150,13 @@ try {
   });
   if (!second.ok || !second.id || second.id === firstId) throw new Error(`WebMCP repeat load did not make an independent id: ${JSON.stringify(second)}`);
   await page.waitForURL(new RegExp(`/projects/${second.id}$`), { timeout: 120_000 });
+  await page.waitForFunction(() => {
+    const frame = document.querySelector('iframe[title="film"]');
+    const intro = frame?.contentDocument?.querySelector('iframe#intro');
+    return !document.body.innerText.includes('Drawing the first frame')
+      && Number(frame?.contentWindow?.film?.duration) > 90
+      && intro != null && getComputedStyle(intro).visibility === 'visible';
+  }, undefined, { timeout: 180_000 });
   await page.getByRole('button', { name: 'Projects' }).click();
   const projectNames = await page.waitForFunction((name) => {
     const dialogs = [...document.querySelectorAll('[role="dialog"]')];
