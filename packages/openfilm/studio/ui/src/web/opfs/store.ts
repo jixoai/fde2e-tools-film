@@ -20,6 +20,7 @@ const STATE_OPENED = 'opened';
 const STATE_COVER = 'cover.ts';
 const FILM = 'film.html';
 const ASSETS = 'assets';
+const DOWNLOADS = 'downloads';
 
 const listeners = new Set<StoreListener>();
 let channel: BroadcastChannel | null = null;
@@ -281,7 +282,11 @@ export async function listFiles(id: string): Promise<StoreListing> {
   }
   const assets = await walk(dir, [ASSETS]);
   if (assets) await collect(assets, ASSETS, out);
-  return { files: out, folders: [ASSETS], pages };
+  /* Web exports are first-class project files: the media pane can download/reuse them, WebMCP
+     can list them, and an interchange package carries its finished deliverables. */
+  const downloads = await walk(dir, [DOWNLOADS]);
+  if (downloads) await collect(downloads, DOWNLOADS, out);
+  return { files: out, folders: [ASSETS, ...(downloads ? [DOWNLOADS] : [])], pages };
 }
 
 /** A file of the project read as text (a page, a style, a worker script). */

@@ -61,53 +61,87 @@ async function pickVideoCodec(container: EncodeContainer, width: number, height:
   return null;
 }
 
-/** The frames + audio encoded into one Blob. Throws `EncodeUnsupportedError` when the device
-    cannot (the caller says so; 3.5's wasm tier is the fallback, not a silent downgrade). */
-export async function encodeVideo(request: EncodeVideoRequest): Promise<EncodedVideo> {
+export interface VideoEncodeSession {
+  codec: string;
+  add(image: CanvasImageSource): Promise<void>;
+  finalize(): Promise<EncodedVideo>;
+  cancel(): Promise<void>;
+}
+
+/** A bounded-memory encoder session: each frame is handed to WebCodecs and closed before the
+    next one is captured. Long films therefore cost encoder queue memory, not width×height×frames. */
+export async function createVideoEncodeSession(request: Omit<EncodeVideoRequest, 'frames'>): Promise<VideoEncodeSession> {
   if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') throw new EncodeUnsupportedError('WebCodecs is not available in this browser');
   const codec = await pickVideoCodec(request.container, request.width, request.height);
   if (!codec) throw new EncodeUnsupportedError(`no encodable ${request.container} video codec on this device`);
-  const { width, height, fps } = request;
-  const step = 1 / fps;
-
-  const video = new VideoSampleSource({ codec, bitrate: request.videoBitrate ?? bitrateFor(width, height) });
+  const step = 1 / request.fps;
+  const video = new VideoSampleSource({ codec, bitrate: request.videoBitrate ?? bitrateFor(request.width, request.height) });
   const output = new Output({
     format: request.container === 'mp4' ? new Mp4OutputFormat() : new WebMOutputFormat(),
     target: new BufferTarget(),
   });
-  output.addVideoTrack(video, { frameRate: fps });
-
+  output.addVideoTrack(video, { frameRate: request.fps });
   let audioSource: AudioBufferSource | null = null;
   if (request.audio?.length) {
-    audioSource = new AudioBufferSource({ codec: 'aac', bitrate: 192_000 });
+    audioSource = new AudioBufferSource({ codec: request.container === 'webm' ? 'opus' : 'aac', bitrate: 192_000 });
     output.addAudioTrack(audioSource);
   }
+  await output.start();
+  let frameIndex = 0;
+  let state: 'open' | 'finalizing' | 'settled' = 'open';
+  return {
+    codec,
+    async add(image) {
+      if (state !== 'open') throw new Error('the encoder session is already settled');
+      /* VideoSample takes seconds (VideoFrame takes microseconds): keep the frozen
+         `(i + 0.5) / fps` grid in the units this high-level API specifies. */
+      const sample = new VideoSample(image, { timestamp: (frameIndex + 0.5) * step, duration: step });
+      try { await video.add(sample); } finally { sample.close(); }
+      frameIndex += 1;
+    },
+    async finalize() {
+      if (state !== 'open') throw new Error('the encoder session is already settled');
+      state = 'finalizing';
+      try {
+        await video.close();
+        if (audioSource) {
+          for (const track of request.audio!) await audioSource.add(track.buffer);
+          await audioSource.close();
+        }
+        await output.finalize();
+        const buffer = (output.target as BufferTarget).buffer;
+        if (!buffer) throw new EncodeUnsupportedError('the muxer produced nothing');
+        const mime = await Promise.resolve(output.getMimeType());
+        state = 'settled';
+        return { blob: new Blob([buffer], { type: mime }), codec, container: request.container };
+      } catch (error) {
+        /* `finalize` can fail after VideoEncoder/AudioEncoder have opened resources. A failed
+           finalization still has to settle the muxer; otherwise the next long export inherits
+           encoder memory until the page itself is torn down. */
+        await output.cancel().catch(() => {});
+        state = 'settled';
+        throw error;
+      }
+    },
+    async cancel() {
+      if (state === 'settled') return;
+      state = 'settled';
+      await output.cancel();
+    },
+  };
+}
 
-  await output.start(); // a promise: adding before it settles loses the samples
-  const us = (s: number) => Math.round(s * 1e6);
-  for (let i = 0; i < request.frames.length; i++) {
-    const frame = request.frames[i]!;
-    const at = us((i + 0.5) * step); // the frame grid decides; frame.t is informational
-    const sample = new VideoSample(frame.image, { timestamp: at, duration: us(step) });
-    try {
-      await video.add(sample);
-    } finally {
-      sample.close();
-    }
+/** The frames + audio encoded into one Blob. The convenience form uses the same streaming
+    session as the export pump; callers with a live source should add each frame directly. */
+export async function encodeVideo(request: EncodeVideoRequest): Promise<EncodedVideo> {
+  const session = await createVideoEncodeSession(request);
+  try {
+    for (const frame of request.frames) await session.add(frame.image);
+    return await session.finalize();
+  } catch (error) {
+    await session.cancel().catch(() => {});
+    throw error;
   }
-  await video.close();
-
-  if (audioSource) {
-    for (const track of request.audio!) {
-      await audioSource.add(track.buffer);
-    }
-    await audioSource.close();
-  }
-  await output.finalize();
-  const buffer = (output.target as BufferTarget).buffer;
-  if (!buffer) throw new EncodeUnsupportedError('the muxer produced nothing');
-  const mime = await Promise.resolve(output.getMimeType());
-  return { blob: new Blob([buffer], { type: mime }), codec, container: request.container };
 }
 
 /** The rate a frame of this size wants (the ladder mediabunny's QUALITY builds on). */

@@ -109,11 +109,9 @@ async function call<T>(url: string, init?: RequestInit & { json?: unknown }): Pr
  */
 export function listExports(projectId: string): Promise<{ exports: ExportJob[]; folder: string; can: ExportCapabilities; drafts?: { jianying: boolean; capcut: boolean }; subtitles?: number; project?: ProjectSizes }> {
   if (isWeb()) {
-    /* the web face has no export server yet (the encode pipeline is batch 3): the tray shows
-       nothing and the center reports nothing encodable, instead of asking a server that is not there */
-    return Promise.resolve({
-      exports: [], folder: '', can: { h264: false, hevc: false, hevcAlpha: false, vp9: false, prores: false, proresChip: false, mp3: false },
-    });
+    return import('../web/web-export.ts').then(({ listWebExports, webExportCapabilities }) => ({
+      exports: listWebExports(projectId), folder: 'downloads', can: webExportCapabilities(),
+    }));
   }
   return call(endpoint(projectId), { cache: 'no-store' });
 }

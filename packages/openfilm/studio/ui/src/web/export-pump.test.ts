@@ -27,15 +27,22 @@ test('the pump walks the (i+0.5)/fps grid in order', async () => {
   const seen: number[] = [];
   // abort right away: we only assert the grid the pump ATTEMPTED is right, so let it run 3 frames then abort
   const controller = new AbortController();
+  let cancelled = 0;
   const run = pumpExport({
     width: 320, height: 180, fps: 30, frameCount: 3, source,
     signal: controller.signal,
+    sessionFactory: async () => ({
+      codec: 'fake', add: async () => {},
+      finalize: async () => ({ blob: new Blob(), codec: 'fake', container: 'mp4' as const }),
+      cancel: async () => { cancelled += 1; },
+    }),
     onProgress: (p) => { if (p.phase === 'capture' && p.frame === 1) controller.abort(); },
   });
   const result = await run;
   assert.deepEqual(seeks, [0.5 / 30, 1.5 / 30]);
   assert.equal(result.cancelled, true);
   assert.equal(result.result, null);
+  assert.equal(cancelled, 1);
   void seen;
 });
 

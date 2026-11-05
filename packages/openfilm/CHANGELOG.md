@@ -1,5 +1,14 @@
 # openfilm
 
+## 0.3.0 — FDE2E Film Web edition
+
+- Browser-only OPFS projects, version history, interchange packages and persistent exports.
+- 35 WebMCP tools for inspect, edit, project and produce workflows, with BU/Omni bridge support.
+- WebCodecs MP4/WebM encoding, browser audio mixdown, same-origin single-thread ffmpeg.wasm fallback and bounded-memory long exports.
+- Bundled checksum-verified One Prompt example and passive local/base64/allowlisted-URL media intake.
+- Production static deployment at `film.tool.fde2e.com` with SPA, Range, WASM/worker MIME and non-COI guarantees.
+- Deterministic first-load preview startup: Service Worker control precedes the app, bundled page spans are explicit, and desktop/Web preview origins remain correctly isolated.
+
 ## 0.2.7
 
 ### Patch Changes

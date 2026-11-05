@@ -11,6 +11,8 @@ import { BookmarkPlus, ClipboardCopy, ClipboardPaste, GalleryVerticalEnd, Layers
 import { applyOps } from '../../../server/ops.mjs';
 import * as store from '../web/opfs';
 import { isWeb, web } from '../web/backend';
+import { capturePreviewFrame } from '../web/frame-capture';
+import { registerWebProjectRuntime } from '../web/web-runtime';
 import { importMediaUrl, importProjectBinary, probeWebMedia } from '../web/media-intake';
 import { api, ApiError, PREFS_EVENT, projectEvents, type Clip, type Film, type Listing, type Op, type ProjectFilm, type ProjectSettings } from '@/api';
 import { useT } from '@/i18n';
@@ -414,6 +416,76 @@ export function ProjectView({ projectId, onProject, onLeave }: {
 
   /* ── transport: the sound is the clock; the picture follows it, drawn in the preview from the player's line ── */
   const player = React.useRef(new Player());
+  const projectFpsRef = React.useRef(30);
+  const webPreviewSource = React.useMemo(() => ({
+    seek: async (t: number) => {
+      const wanted = Math.max(0, t);
+      /* Preview may atomically swap in a freshly loaded iframe while a long export is stepping
+         frames (media facts, a page load, or a version restore can trigger that). Follow the
+         currently shown frame and re-issue the same idempotent seek there; accepting a reply
+         from the old iframe would capture the new iframe at the wrong moment. */
+      await new Promise<void>((resolve, reject) => {
+        let lastWindow: Window | null = null;
+        let lastSent = 0;
+        let settled = false;
+        const cleanup = () => {
+          settled = true;
+          clearTimeout(timeout);
+          clearInterval(pulse);
+          window.removeEventListener('message', onMessage);
+        };
+        const finish = (error?: Error) => {
+          if (settled) return;
+          cleanup();
+          if (error) reject(error); else resolve();
+        };
+        const send = () => {
+          const current = preview.current?.frame?.()?.contentWindow ?? null;
+          if (!current) return;
+          const now = performance.now();
+          if (current === lastWindow && now - lastSent < 1_500) return;
+          lastWindow = current;
+          lastSent = now;
+          preview.current?.seek(wanted);
+        };
+        const onMessage = (event: MessageEvent) => {
+          if (event.origin !== location.origin || event.data?.source !== 'openfilm-film') return;
+          const current = preview.current?.frame?.()?.contentWindow ?? null;
+          if (!current || event.source !== current) return; // stale iframe after an atomic swap
+          if (event.data?.type === 'error') {
+            finish(new Error(`the Film preview could not draw ${wanted.toFixed(3)}s: ${String(event.data.message ?? 'unknown error')}`));
+            return;
+          }
+          if (event.data?.type === 'seeked' && Math.abs(Number(event.data.t) - wanted) <= 1e-3) finish();
+        };
+        const timeout = window.setTimeout(() => finish(new Error(`the Film preview did not draw ${wanted.toFixed(3)}s in time`)), 20_000);
+        const pulse = window.setInterval(send, 100);
+        window.addEventListener('message', onMessage);
+        send();
+      });
+    },
+    capture: async () => {
+      const frame = preview.current?.frame?.() ?? null;
+      if (!frame) throw new Error('the Film preview is not ready');
+      return capturePreviewFrame(frame, filmRef.current?.stage ?? { w: 1920, h: 1080 });
+    },
+    size: () => filmRef.current?.stage ?? { w: 1920, h: 1080 },
+    duration: () => player.current.duration,
+    audio: (from: number, to: number) => player.current.mixdown(from, to),
+  }), []);
+  const webRuntimeReady = info !== null;
+  React.useEffect(() => {
+    /* Registration means the preview has completed its ready handshake, not merely that React
+       mounted ProjectView. Produce callers waiting on this capability can therefore use duration
+       and pixels immediately instead of racing the first FilmInfo message. */
+    if (!isWeb() || !webRuntimeReady) return undefined;
+    return registerWebProjectRuntime({
+      projectId,
+      source: webPreviewSource,
+      duration: () => player.current.duration,
+      fps: () => exactRate(projectFpsRef.current),
+    });
+  }, [projectId, webPreviewSource, webRuntimeReady]);
   React.useEffect(() => {
     const p = player.current;
     p.onAnchor = (anchor) => preview.current?.play?.(anchor);
@@ -669,6 +741,7 @@ export function ProjectView({ projectId, onProject, onLeave }: {
     ...(rawListing?.files ?? []).filter((f) => f.kind === 'video').map((f) => facts.get(f.path)?.fps),
   ]), [timelineTracks, rawListing, facts]);
   const projectFps = settings?.fps ?? footageRate;
+  projectFpsRef.current = projectFps;
   /* stretches that play late, rendered in the background to play smoothly (editor/use-preview-renders) */
   const { renders: rendersOn, stats: statsOn } = usePreviewPrefs();
   const previewRenders = usePreviewRenders({ projectId, folder, fps: exactRate(projectFps), playing, on: rendersOn, film: film.film, files: filesTick, preview });
@@ -3628,41 +3701,7 @@ export function ProjectView({ projectId, onProject, onLeave }: {
         onQueued={(jobs) => exportTrayRef.current?.push(jobs)}
         projectFps={projectFps}
         missingFiles={[...mediaTrouble].flatMap(([src, why]) => (why === 'missing' ? [src] : []))}
-        {...(isWeb() ? {
-          webSource: () => {
-            const frame = preview.current?.frame?.() ?? null;
-            const win = frame?.contentWindow ?? null;
-            if (!frame || !win) return null;
-            return {
-              seek: (t: number) => new Promise<void>((done) => {
-                const once = () => { win.removeEventListener('message', once); done(); };
-                win.addEventListener('message', once);
-                preview.current?.seek(t);
-                setTimeout(done, 3000); // the drawn signal can be missed between loads; don't hang
-              }),
-              capture: async () => {
-                const canvas = document.createElement('canvas');
-                canvas.width = stage.w; canvas.height = stage.h;
-                // an iframe is not a CanvasImageSource — same-origin, so the page draws
-                // itself onto one (the in-page lane's own composition; T04's keep)
-                const ctx = canvas.getContext('2d')!;
-                ctx.fillStyle = '#000';
-                ctx.fillRect(0, 0, stage.w, stage.h);
-                const doc = frame.contentDocument;
-                const html = doc?.documentElement;
-                if (html) {
-                  const svg = new XMLSerializer().serializeToString(html);
-                  const img = new Image();
-                  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-                  await new Promise<void>((done) => { img.onload = () => done(); img.onerror = () => done(); });
-                  ctx.drawImage(img, 0, 0, stage.w, stage.h);
-                }
-                return canvas;
-              },
-              size: () => ({ w: stage.w, h: stage.h }),
-            };
-          },
-        } : {})}
+        {...(isWeb() ? { webSource: () => webPreviewSource } : {})}
       />
       <PasteAttrsDialog attrs={pasteAttrsOpen ? copiedAttrs : null} onPaste={doPasteAttrs} onCancel={() => setPasteAttrsOpen(false)} />
       <ExportTray ref={exportTrayRef} projectId={projectId} onError={toast.showError} inset={hostPanel?.open ? hostPanel.width : 0} webJobs={isWeb()} />

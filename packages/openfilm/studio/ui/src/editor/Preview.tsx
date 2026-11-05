@@ -109,10 +109,11 @@ const HOLD_POLL_MS = 100;
 
 export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ folder, stage, time, fps, onInfo, onKey, onError, onPlayed, onSpans, children }, ref) {
   const t = useT();
-  /* the folder is a project path on the server face and an OPFS id on the web face; the frames are
-     always served same-origin, so the target origin is this page's either way (the server face's
-     folder is itself under this origin) */
-  const origin = window.location.origin;
+  /* The server face deliberately serves project pages from a separate localhost origin, while
+     the pure-Web face uses the current origin's /wf route. Resolve either folder form before
+     filtering postMessage events: forcing the editor origin silently drops every server preview
+     ready/seeked message. */
+  const origin = new URL(folder, window.location.href).origin;
   const [frames, setFrames] = useState<Frame[]>([{ key: 1, ready: false }]);
   const elements = useRef(new Map<number, HTMLIFrameElement>());
   const seq = useRef(0);

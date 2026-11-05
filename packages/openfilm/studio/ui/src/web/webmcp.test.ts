@@ -34,6 +34,9 @@ test('guardrail annotations: read-only where promised, consequential on delete',
   for (const name of ['film_state', 'film_problems', 'film_overrides', 'projects_list', 'projects_list_media', 'projects_export_package', 'produce_export_status']) {
     assert.equal(byName.get(name)?.annotations?.readOnlyHint, true, `${name} should be read-only`);
   }
+  for (const name of ['produce_look', 'produce_render']) {
+    assert.equal(byName.get(name)?.annotations?.readOnlyHint, false, `${name} creates an export artifact`);
+  }
   assert.equal(byName.get('projects_delete')?.annotations?.consequentialHint, true);
   assert.equal(byName.get('projects_delete')?.annotations?.readOnlyHint, false);
   assert.equal(byName.get('projects_load_example')?.annotations?.readOnlyHint, false);
@@ -82,4 +85,51 @@ test('registration outside a browser answers supported:false (no document)', asy
   assert.equal(result.supported, false);
   assert.deepEqual(result.registered, []);
   assert.deepEqual(result.failures, []);
+});
+
+
+test('produce schemas expose executable capture and render controls', () => {
+  const look = byName.get('produce_look')!.inputSchema as { properties: Record<string, unknown> };
+  const render = byName.get('produce_render')!.inputSchema as { properties: Record<string, unknown> };
+  assert.deepEqual(Object.keys(look.properties), ['at', 'name', 'shortEdge', 'frame', 'fill']);
+  assert.ok(['kind', 'from', 'to', 'moments', 'codec', 'format', 'download', 'wait'].every((key) => key in render.properties));
+  assert.match(byName.get('produce_render')!.description, /writes atomically to OPFS downloads/);
+  assert.match(byName.get('produce_render')!.description, /job immediately by default/);
+  assert.match((render.properties.wait as { description: string }).description, /default false/);
+});
+
+test('produce status promises the terminal encoder and progress receipt used by agents', () => {
+  const status = byName.get('produce_export_status')!;
+  assert.match(status.description, /jobs|任务/i);
+  const source = String(status.execute);
+  for (const field of ['previewReady', 'phase', 'framesDone', 'framesTotal', 'rate', 'etaMs', 'encoder', 'outputs', 'bytes']) {
+    assert.match(source, new RegExp(`\\b${field}\\b`), `${field} is missing from the public status projection`);
+  }
+});
+
+
+test('produce handlers fail closed on malformed kind, frame and fill values', async () => {
+  const runtime = await import('./web-runtime.ts');
+  const stop = runtime.registerWebProjectRuntime({
+    projectId: 'guard-project',
+    source: { seek: async () => {}, capture: async () => ({}) as HTMLCanvasElement, size: () => ({ w: 1920, h: 1080 }), duration: () => 1 },
+    duration: () => 1,
+    fps: () => 30,
+  });
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, 'location', { value: { pathname: '/projects/guard-project' }, configurable: true });
+  try {
+    for (const [name, input, word] of [
+      ['produce_look', { frame: 'bogus' }, 'frame'],
+      ['produce_render', { kind: 'audio' }, 'kind'],
+      ['produce_render', { fill: 'stretch' }, 'fill'],
+    ] as const) {
+      const raw = await byName.get(name)!.execute(input, {});
+      const answer = JSON.parse(raw);
+      assert.match(answer.error, new RegExp(word));
+    }
+  } finally {
+    stop();
+    Object.defineProperty(globalThis, 'location', { value: originalLocation, configurable: true });
+  }
 });

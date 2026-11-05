@@ -14,9 +14,15 @@ import { registerWebMCPTools } from './webmcp-register';
 window.filmWeb = true;
 applyStudioHost();
 
-// the web file server: /wf/<id>/… answered from OPFS (film pages, media, covers load as URLs)
-if ('serviceWorker' in navigator) {
-  void navigator.serviceWorker.register('/opfs-sw.js');
+// The OPFS URL face is a boot dependency, not a best-effort enhancement. Exposing the project
+// UI or WebMCP before this client is controlled creates a race where the first /wf/<id>/film.html
+// hits the SPA fallback and the preview waits forever. `clients.claim()` makes a fresh first-load
+// client controllable without a reload; wait for that observable state before mounting either face.
+if (!('serviceWorker' in navigator)) throw new Error('FDE2E Film requires Service Worker support');
+await navigator.serviceWorker.register('/opfs-sw.js');
+await navigator.serviceWorker.ready;
+if (!navigator.serviceWorker.controller) {
+  await new Promise<void>((resolve) => navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), { once: true }));
 }
 
 createRoot(document.getElementById('root')!).render(<StrictMode><FocusNav /><App /></StrictMode>);

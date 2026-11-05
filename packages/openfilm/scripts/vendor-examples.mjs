@@ -90,6 +90,15 @@ const required = new Set([
   'vendor/three/three.module.js', 'vendor/three/three.core.js', 'vendor/three/addons/loaders/FontLoader.js',
 ]);
 for (const name of required) if (!files.some((file) => file.path === name)) throw new Error(`example is missing ${name}`);
+/* One Prompt has eight WebGL page clips. Their exact lengths are known by the edit, so keep the
+   #t ranges in film.html instead of forcing a fresh editor preview to initialize all eight page
+   runtimes merely to discover duration. This is both protocol truth and the first-load timeout
+   guard for production hardware. */
+const exampleFilm = readFileSync(join(exampleRoot, 'film.html'), 'utf8');
+const pageSources = [...exampleFilm.matchAll(/<iframe\b[^>]*\bsrc=["']([^"']+)["']/gi)].map((match) => match[1]);
+if (!pageSources.length || pageSources.some((src) => !/#t=0,\d+(?:\.\d+)?$/.test(src))) {
+  throw new Error('one-prompt page clips must carry explicit #t=0,duration ranges');
+}
 const runtimeText = files.filter((file) => /\.(?:html|js|css)$/i.test(file.path) && !file.path.startsWith('vendor/three/'));
 const executableText = (file) => readFileSync(join(exampleRoot, file.path), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//g, '')

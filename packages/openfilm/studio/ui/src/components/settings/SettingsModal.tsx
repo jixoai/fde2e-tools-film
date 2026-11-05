@@ -248,7 +248,7 @@ function GeneralSection() {
           )}
         />
       </SettingsGroup>
-      <StorageGroup />
+      {window.filmWeb ? null : <StorageGroup />}
       {studioHost?.update?.onState ? <AppAboutGroup /> : <AboutGroup />}
     </SettingsPage>
   );

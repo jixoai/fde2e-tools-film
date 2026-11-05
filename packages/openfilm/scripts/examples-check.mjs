@@ -84,7 +84,10 @@ try {
   const firstId = new URL(page.url()).pathname.split('/').pop();
   await page.waitForFunction(() => {
     const frame = document.querySelector('iframe[title="film"]');
-    return !document.body.innerText.includes('Drawing the first frame') && Number(frame?.contentWindow?.film?.duration) > 90;
+    const intro = frame?.contentDocument?.querySelector('iframe#intro');
+    return !document.body.innerText.includes('Drawing the first frame')
+      && Number(frame?.contentWindow?.film?.duration) > 90
+      && intro != null && getComputedStyle(intro).visibility === 'visible';
   }, undefined, { timeout: 180_000 });
   const firstState = await page.evaluate(async (id) => {
     const base = await navigator.storage.getDirectory();
@@ -126,7 +129,10 @@ try {
   await page.reload({ waitUntil: 'load' });
   await page.waitForFunction(() => {
     const frame = document.querySelector('iframe[title="film"]');
-    return !document.body.innerText.includes('Drawing the first frame') && Number(frame?.contentWindow?.film?.duration) > 90;
+    const intro = frame?.contentDocument?.querySelector('iframe#intro');
+    return !document.body.innerText.includes('Drawing the first frame')
+      && Number(frame?.contentWindow?.film?.duration) > 90
+      && intro != null && getComputedStyle(intro).visibility === 'visible';
   }, undefined, { timeout: 180_000 });
   if (!page.url().endsWith(firstId)) throw new Error(`reload changed project id: ${page.url()}`);
   await page.screenshot({ path: join(evidenceDir, 'img/04-reload-persisted.png'), fullPage: true });

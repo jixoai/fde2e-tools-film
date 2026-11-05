@@ -111,9 +111,21 @@ export interface StudioProblem {
   step?: string;
 }
 
+const WEB_PREFS_KEY = 'fde2e.film.web-prefs.v1';
+const webPrefs = (): StudioPrefs => {
+  let saved: Partial<StudioPrefs> = {};
+  try { saved = JSON.parse(localStorage.getItem(WEB_PREFS_KEY) ?? '{}') as Partial<StudioPrefs>; } catch { /* reset malformed prefs */ }
+  return {
+    proxies: { on: false, height: 720 }, seenVersion: null, projectsFolder: null,
+    keys: {}, autoVersions: false, ...saved,
+  };
+};
+
 export const api = {
   /** this Studio's version and the latest openfilm on npm; `check`: ask npm now */
-  version: (check = false) => call<StudioVersion>(`version${check ? '?check=1' : ''}`),
+  version: (check = false) => isWeb()
+    ? Promise.resolve({ version: __FILM_VERSION__, latest: null, newer: false, checkedAt: null, checking: false, source: false })
+    : call<StudioVersion>(`version${check ? '?check=1' : ''}`),
   /** the newest openfilm, run in the background (`openfilm update`): Studio starts again on it; refused (ApiError, `body.code`) while busy */
   update: () => call<{ update: NonNullable<StudioVersion['update']> }>('update', { method: 'POST', json: {} }),
   /** `openfilm doctor`, run by this Studio: the report to paste into an issue (src/doctor.mjs) */
@@ -125,9 +137,7 @@ export const api = {
   projects: (): Promise<Project[]> => isWeb()
     ? store.listProjects().then((all) => all.map(asProject))
     : call<{ projects: Project[] }>('projects').then((r) => r.projects),
-  prefs: (): Promise<StudioPrefs> => (isWeb()
-    ? Promise.resolve({ proxies: { on: false, height: 720 }, seenVersion: null, projectsFolder: null, keys: {}, autoVersions: false })
-    : call<StudioPrefs>('prefs')),
+  prefs: (): Promise<StudioPrefs> => (isWeb() ? Promise.resolve(webPrefs()) : call<StudioPrefs>('prefs')),
   /** where new projects and exports go, and the free space there */
   locations: () => call<StudioLocations>('locations'),
   /** move the library to `path` (null: the default); with `move`, its projects go too (those that could not are in `failed`) */
@@ -139,10 +149,17 @@ export const api = {
   revealProject: (id: string) => call<object>(`projects/${encodeURIComponent(id)}/reveal`, { method: 'POST', json: {} }),
   /** one of them in the system's file manager */
   openLocation: (which: keyof StudioLocations) => call<{ ok: true }>(`locations/${which}`, { method: 'POST', json: {} }),
-  setPrefs: (patch: { proxies?: Partial<StudioPrefs['proxies']>; seenVersion?: string; projectsFolder?: string | null; keys?: unknown; autoVersions?: boolean }) => call<StudioPrefs>('prefs', { method: 'PATCH', json: patch }).then((prefs) => {
-    window.dispatchEvent(new Event(PREFS_EVENT));
-    return prefs;
-  }),
+  setPrefs: (patch: { proxies?: Partial<StudioPrefs['proxies']>; seenVersion?: string; projectsFolder?: string | null; keys?: unknown; autoVersions?: boolean }) => (isWeb()
+    ? Promise.resolve().then((): StudioPrefs => {
+      const current = webPrefs();
+      const prefs: StudioPrefs = { ...current, ...patch, proxies: { ...current.proxies, ...(patch.proxies ?? {}) } };
+      localStorage.setItem(WEB_PREFS_KEY, JSON.stringify(prefs));
+      return prefs;
+    })
+    : call<StudioPrefs>('prefs', { method: 'PATCH', json: patch })).then((prefs) => {
+      window.dispatchEvent(new Event(PREFS_EVENT));
+      return prefs;
+    }),
   /** the system's folder dialog, opened by Studio (a page in a browser cannot learn a path): the folder, or null when
       cancelled; throws (501) where this system has none */
   pickFolder: (title: string, at?: string) => call<{ path: string | null }>('pick-folder', { method: 'POST', json: { title, ...(at ? { at } : {}) } }).then((r) => r.path),

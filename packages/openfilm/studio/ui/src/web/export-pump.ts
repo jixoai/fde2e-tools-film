@@ -9,7 +9,7 @@
  * only the part that must not drift: the (i+0.5)/fps grid, the serial loop, cancellation, and
  * the progress story.
  */
-import { encodeVideo, type EncodeContainer, type EncodedVideo } from './encode-backend.ts';
+import { createVideoEncodeSession, type EncodeContainer, type EncodedVideo } from './encode-backend.ts';
 import { laneFor } from './capture-lanes.ts';
 
 /** A pixel source the pump drives: seek to t, resolve when the frame is on screen, read pixels. */
@@ -28,6 +28,8 @@ export interface PumpOptions {
   source: FrameSource;
   container?: EncodeContainer;
   audio?: readonly { buffer: AudioBuffer }[];
+  /** Alternate session factory for deterministic tests or an embedding-supplied compatible backend. */
+  sessionFactory?: typeof createVideoEncodeSession;
   onProgress?: (progress: PumpProgress) => void;
   /** Frames already in the bag (a resumed export). */
   from?: number;
@@ -46,25 +48,30 @@ export async function pumpExport(opts: PumpOptions): Promise<PumpResult> {
   const lane = laneFor('video');
   if (!lane) throw new Error('no capture lane for the film here');
   const container = opts.container ?? 'mp4';
-  const frames: Array<{ image: CanvasImageSource; t: number }> = [];
   const stopped = () => opts.signal?.aborted === true;
   const total = opts.frameCount;
-  for (let i = opts.from ?? 0; i < total; i++) {
-    if (stopped()) return { result: null, frames: frames.length, cancelled: true };
-    opts.onProgress?.({ frame: i, total, phase: 'capture' });
-    await opts.source.seek((i + 0.5) / opts.fps); // the grid: the same t the encoder writes
-    const image = await opts.source.capture();
-    frames.push({ image, t: (i + 0.5) / opts.fps });
-    if (i % 30 === 29) await new Promise((r) => setTimeout(r, 0)); // yield: the page stays alive
+  let frames = 0;
+  let session: Awaited<ReturnType<typeof createVideoEncodeSession>> | null = null;
+  try {
+    for (let i = opts.from ?? 0; i < total; i++) {
+      if (stopped()) { await session?.cancel(); return { result: null, frames, cancelled: true }; }
+      opts.onProgress?.({ frame: i, total, phase: 'capture' });
+      /* Cancellation observed after a frame starts lets the single-shot capture settle before
+         the encoder session is canceled; this preserves the pump's "finish current frame" ask. */
+      await opts.source.seek((i + 0.5) / opts.fps); // the grid: the same t the encoder writes
+      const image = await opts.source.capture();
+      if (stopped()) { await session?.cancel(); return { result: null, frames, cancelled: true }; }
+      session ??= await (opts.sessionFactory ?? createVideoEncodeSession)({ width: opts.width, height: opts.height, fps: opts.fps, audio: opts.audio, container });
+      await session.add(image);
+      frames += 1;
+      if (i % 30 === 29) await new Promise((r) => setTimeout(r, 0)); // yield: the page stays alive
+    }
+    opts.onProgress?.({ frame: total, total, phase: 'encode' });
+    if (!session) throw new Error('the export has no frames');
+    const result = await session.finalize();
+    return { result, frames, cancelled: false };
+  } catch (error) {
+    await session?.cancel().catch(() => {});
+    throw error;
   }
-  opts.onProgress?.({ frame: total, total, phase: 'encode' });
-  const result = await encodeVideo({
-    width: opts.width,
-    height: opts.height,
-    fps: opts.fps,
-    frames,
-    audio: opts.audio,
-    container,
-  });
-  return { result, frames: frames.length, cancelled: false };
 }

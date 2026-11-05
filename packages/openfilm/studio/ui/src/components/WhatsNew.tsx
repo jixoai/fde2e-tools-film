@@ -12,7 +12,7 @@ import { api } from '@/api';
 import { useLanguage, useT } from '@/i18n';
 import { RELEASE, WHATS_NEW_EVENT, compareVersions, releaseNotes, type NoteKind, type ReleaseNotes } from '@/lib/whats-new';
 
-const CHANGELOG = 'https://github.com/openfilm/openfilm/releases';
+const CHANGELOG = 'https://github.com/jixoai/fde2e-tools-film/blob/main/packages/openfilm/CHANGELOG.md';
 const KINDS: readonly NoteKind[] = ['new', 'improved', 'fixed'];
 const KIND_ICON: Record<NoteKind, React.ReactNode> = {
   new: <Sparkles size={14} aria-hidden />,

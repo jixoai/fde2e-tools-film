@@ -17,6 +17,7 @@
  * per tool are recorded, never fatal. Response is always a JSON string.
  */
 import { currentProjectId, jsonSchema, say, type ModelContextLike, type WebMCPToolDef } from './webmcp-kit.ts';
+import { frameRatioOf, type FilmFrameId } from '../lib/film-frame.ts';
 export type { ModelContextLike, WebMCPToolDef } from './webmcp-kit.ts';
 
 /** The api and friends load lazily: the defs must be inspectable (tests, listing) without the
@@ -27,6 +28,17 @@ const historyApiModule = async () => (await import('../lib/project-history.ts'))
 const lanes = async () => (await import('./capture-lanes.ts')).availableLanes;
 const canEncode = async () => (await import('./encode-backend.ts')).encodeAvailable;
 const canSaveBack = async () => (await import('./save-back.ts')).saveBackAvailable;
+const webRuntime = async () => import('./web-runtime.ts');
+const webExports = async () => import('./web-export.ts');
+const opfs = async () => import('./opfs/index.ts');
+
+const requestedFrame = (value: unknown): FilmFrameId | null => (
+  value === undefined || value === 'native'
+    ? 'native'
+    : typeof value === 'string' && frameRatioOf(value) !== null
+      ? value as FilmFrameId
+      : null
+);
 
 /** Native first, else the vendored polyfill's side effect. Null: the environment can't. */
 export async function ensureModelContext(): Promise<ModelContextLike | null> {
@@ -281,33 +293,135 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
     // ── produce ──
     {
       name: 'produce_look',
-      title: 'Look (contact sheet / frame)',
-      description: 'Not yet: frame capture rides the export pump wiring (3.3). Present so agents can probe the surface.',
-      inputSchema: jsonSchema({}),
-      annotations: { readOnlyHint: true },
-      execute: async () => say({ error: 'produce_look lands with the export pump wiring' }),
+      title: 'Capture a look',
+      description: 'Capture the open film at one exact second through the same in-page preview lane the human viewer sees. Writes a PNG under downloads/ and returns its OPFS path and bytes. Read-only over the edit timeline; creates an export artifact.',
+      inputSchema: jsonSchema({
+        at: { type: 'number', description: 'Film second to capture (default: 0)' },
+        name: { type: 'string', description: 'Output base name (default: <project> - look)' },
+        shortEdge: { type: 'integer', description: 'Output short edge, 64..4096 (default: native short edge)' },
+        frame: { type: 'string', description: 'native or a W:H ratio such as 9:16 (default: native)' },
+        fill: { type: 'string', enum: ['contain', 'cover'], description: 'How the film fits another frame shape' },
+      }),
+      annotations: { readOnlyHint: false },
+      execute: async ({ at, name, shortEdge, frame, fill }, options) => {
+        const id = currentProjectId();
+        if (!id) return say({ error: 'no project is open' });
+        if (at !== undefined && (typeof at !== 'number' || !Number.isFinite(at) || at < 0)) return say({ error: 'at has to be a film second, 0 or more' });
+        if (shortEdge !== undefined && (typeof shortEdge !== 'number' || !Number.isInteger(shortEdge) || shortEdge < 64 || shortEdge > 4096)) return say({ error: 'shortEdge has to be a whole pixel count from 64 to 4096' });
+        const chosenFrame = requestedFrame(frame);
+        if (chosenFrame === null) return say({ error: 'frame has to be native or a W:H ratio from 1:4 to 4:1' });
+        if (fill !== undefined && fill !== 'contain' && fill !== 'cover') return say({ error: 'fill has to be contain or cover' });
+        let runtime;
+        try { runtime = await (await webRuntime()).waitForWebProjectRuntime(id, { signal: options?.signal }); }
+        catch (error) { return say({ error: error instanceof Error ? error.message : String(error) }); }
+        if (typeof at === 'number' && at > runtime.duration() + 1e-3) return say({ error: `at has to stay inside 0..${runtime.duration()}` });
+        const film = await (await api()).film(id);
+        const request = {
+          kind: 'poster' as const, format: 'png' as const, at: typeof at === 'number' ? at : 0,
+          shortEdge: typeof shortEdge === 'number' ? shortEdge : Math.min(runtime.source.size().w, runtime.source.size().h),
+          frame: chosenFrame,
+          fill: fill === 'cover' ? 'cover' as const : 'contain' as const,
+          name: typeof name === 'string' && name.trim() ? name.trim() : `${film.project.name} - look`, label: 'Look',
+        };
+        try {
+          const exports = await webExports(); const store = await opfs();
+          const job = exports.startWebExport(id, request, runtime.source, { putFile: store.putFile, readFile: store.readFileBytes });
+          const result = await exports.waitForWebExport(id, job.id);
+          return result.status === 'done'
+            ? say({ ok: true, jobId: result.id, path: result.outputs[0], bytes: result.bytes, at: request.at, mime: 'image/png' })
+            : say({ error: result.error ?? `look ${result.status}`, jobId: result.id, status: result.status });
+        } catch (error) { return say({ error: error instanceof Error ? error.message : String(error) }); }
+      },
     },
     {
       name: 'produce_render',
-      title: 'Render (export video)',
-      description: 'Not yet: the export pump wiring (3.3) feeds 3.4\'s encoder. Present so agents can probe the surface; answers unavailable (read-only until it lands).',
-      inputSchema: jsonSchema({}),
-      annotations: { readOnlyHint: true },
-      execute: async () => say({ error: 'produce_render lands with the export pump wiring' }),
+      title: 'Render an export',
+      description: 'Start an MP4/WebM, GIF, PNG-stills or poster export in this browser. Uses the live preview, WebCodecs and same-origin ST ffmpeg where needed; writes atomically to OPFS downloads/. Returns a job immediately by default so long renders outlive the bridge call; poll produce_export_status. Pass wait:true only for a short export that must return exact paths inline. One export runs at a time.',
+      inputSchema: jsonSchema({
+        kind: { type: 'string', enum: ['video', 'gif', 'stills', 'poster'], description: 'Export family (default: video)' },
+        name: { type: 'string', description: 'Output base name (default: project name)' },
+        from: { type: 'number', description: 'Start second for video/GIF (default: 0)' },
+        to: { type: 'number', description: 'End second for video/GIF (default: film end)' },
+        at: { type: 'number', description: 'Poster second, or first still second' },
+        moments: { type: 'array', items: { type: 'number' }, description: 'Still seconds (max 100)' },
+        codec: { type: 'string', enum: ['h264', 'vp9'], description: 'Video codec/container (default: h264/mp4)' },
+        audio: { type: 'boolean', description: 'Include the film mix in video (default: true)' },
+        format: { type: 'string', enum: ['png', 'jpg'], description: 'Still/poster format (default: png)' },
+        fps: { type: 'number', description: 'Frames a second, 1..60 (default: project fps; GIF default 12)' },
+        shortEdge: { type: 'integer', description: 'Video/still short edge, 64..4096 (default: 720)' },
+        width: { type: 'integer', description: 'GIF long edge, 64..1920 (default: 640)' },
+        frame: { type: 'string', description: 'native or W:H ratio (default: native)' },
+        fill: { type: 'string', enum: ['contain', 'cover'], description: 'contain or cover (default: contain)' },
+        download: { type: 'boolean', description: 'Also trigger a browser download after success; implies wait:true' },
+        wait: { type: 'boolean', description: 'Wait for completion and return exact paths inline (default false; use only for short exports)' },
+      }),
+      annotations: { readOnlyHint: false },
+      execute: async (input, options) => {
+        const id = currentProjectId();
+        if (!id) return say({ error: 'no project is open' });
+        const kind = typeof input.kind === 'string' ? input.kind : 'video';
+        if (!['video', 'gif', 'stills', 'poster'].includes(kind)) return say({ error: 'kind has to be video, gif, stills or poster' });
+        const chosenFrame = requestedFrame(input.frame);
+        if (chosenFrame === null) return say({ error: 'frame has to be native or a W:H ratio from 1:4 to 4:1' });
+        if (input.fill !== undefined && input.fill !== 'contain' && input.fill !== 'cover') return say({ error: 'fill has to be contain or cover' });
+        let runtime;
+        try { runtime = await (await webRuntime()).waitForWebProjectRuntime(id, { signal: options?.signal }); }
+        catch (error) { return say({ error: error instanceof Error ? error.message : String(error) }); }
+        const duration = runtime.duration(); const from = typeof input.from === 'number' ? input.from : 0;
+        const to = typeof input.to === 'number' ? input.to : duration;
+        const fps = typeof input.fps === 'number' ? input.fps : kind === 'gif' ? 12 : runtime.fps();
+        if (!(duration > 0)) return say({ error: 'the open film has no duration yet' });
+        if (!(fps >= 1 && fps <= 60)) return say({ error: 'fps has to be from 1 to 60' });
+        if ((kind === 'video' || kind === 'gif') && (!(from >= 0) || !(to > from) || to > duration + 1e-3)) return say({ error: `range has to stay inside 0..${duration}` });
+        const shortEdge = typeof input.shortEdge === 'number' ? input.shortEdge : 720;
+        if (!Number.isInteger(shortEdge) || shortEdge < 64 || shortEdge > 4096) return say({ error: 'shortEdge has to be a whole pixel count from 64 to 4096' });
+        const width = typeof input.width === 'number' ? input.width : 640;
+        if (!Number.isInteger(width) || width < 64 || width > 1920) return say({ error: 'width has to be a whole pixel count from 64 to 1920' });
+        const moments = Array.isArray(input.moments) ? input.moments : typeof input.at === 'number' ? [input.at] : [0];
+        if (moments.length > 100 || moments.some((value) => typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > duration)) return say({ error: `moments have to stay inside 0..${duration} (max 100)` });
+        const film = await (await api()).film(id); const name = typeof input.name === 'string' && input.name.trim() ? input.name.trim() : film.project.name;
+        const common = { name, label: kind === 'video' ? 'Video' : kind.toUpperCase(), frame: chosenFrame, fill: input.fill === 'cover' ? 'cover' as const : 'contain' as const };
+        const request = kind === 'video'
+          ? { ...common, kind: 'video' as const, codec: input.codec === 'vp9' ? 'vp9' as const : 'h264' as const, fps, quality: 'high' as const, audio: input.audio !== false, shortEdge, range: [from, to] as [number, number] }
+          : kind === 'gif'
+            ? { ...common, kind: 'gif' as const, fps, width, range: [from, to] as [number, number] }
+            : kind === 'poster'
+              ? { ...common, kind: 'poster' as const, format: input.format === 'jpg' ? 'jpg' as const : 'png' as const, shortEdge, at: moments[0] ?? 0 }
+              : { ...common, kind: 'stills' as const, as: 'files' as const, format: input.format === 'jpg' ? 'jpg' as const : 'png' as const, shortEdge, at: moments };
+        try {
+          const exports = await webExports(); const store = await opfs();
+          const job = exports.startWebExport(id, request, runtime.source, { putFile: store.putFile, readFile: store.readFileBytes });
+          if (input.wait !== true && input.download !== true) {
+            return say({ ok: true, jobId: job.id, kind, status: job.status, poll: 'produce_export_status' });
+          }
+          const result = await exports.waitForWebExport(id, job.id, options?.signal);
+          if (result.status !== 'done') return say({ error: result.error ?? `render ${result.status}`, jobId: result.id, status: result.status });
+          const download = input.download === true ? await exports.downloadWebExport(id, result.id, store.readFileBytes) : null;
+          return say({ ok: true, jobId: result.id, kind, status: result.status, paths: result.outputs, bytes: result.bytes, encoder: result.encoder, ...(download ? { download } : {}) });
+        } catch (error) { return say({ error: error instanceof Error ? error.message : String(error) }); }
+      },
     },
     {
       name: 'produce_export_status',
       title: 'Export status',
-      description: 'Whether the environment can encode (WebCodecs) and what the project\'s version history holds. Read-only.',
+      description: 'Read preview readiness, current Web export jobs, encode capabilities, byte totals and project versions. Read-only.',
       inputSchema: jsonSchema({}),
       annotations: { readOnlyHint: true },
       execute: async () => {
-        const id = currentProjectId();
-        const history = id ? await (await historyApiModule()).load(id) : null;
+        const id = currentProjectId(); const history = id ? await (await historyApiModule()).load(id) : null;
+        const exports = await webExports();
         return say({
+          projectId: id, previewReady: id ? Boolean((await webRuntime()).webProjectRuntime(id)) : false,
           encodeAvailable: await (await canEncode())('mp4').catch(() => false),
+          capabilities: exports.webExportCapabilities(), busy: id ? exports.webExportBusy(id) : false,
+          bytes: id ? exports.webExportBytes(id) : 0,
+          jobs: id ? exports.listWebExports(id).map((job) => ({
+            id: job.id, kind: job.kind, status: job.status, phase: job.phase,
+            progress: job.progress, framesDone: job.framesDone, framesTotal: job.framesTotal,
+            rate: job.rate, etaMs: job.etaMs, encoder: job.encoder,
+            outputs: job.outputs, bytes: job.bytes, error: job.error,
+          })) : [],
           versions: history?.versions.length ?? 0,
-          projectId: id,
         });
       },
     },

@@ -315,6 +315,47 @@ export class Player {
     return this.samples;
   }
 
+  /** Render the film's audible mix for a Web export range. The common speed=1 path stays
+   *  entirely in Web Audio and feeds Mediabunny's AAC/Opus source. Speed-adjusted sound is
+   *  refused rather than pitch-shifted: the desktop ffmpeg mixer remains the truthful path for
+   *  that uncommon case until a pitch-preserving Web mixer is available. */
+  async mixdown(from: number, to: number): Promise<AudioBuffer | null> {
+    const start = Math.max(0, from);
+    const end = Math.min(this.duration, to);
+    if (!(end > start)) throw new Error('the audio range is empty');
+    const sounds = this.sounds.filter((sound) => sound.at < end && sound.at + lengthOf(sound) > start);
+    if (!sounds.length) return null;
+    if (sounds.some((sound) => Math.abs(sound.speed - 1) > 1e-6)) {
+      throw new Error('Web export cannot preserve pitch for speed-adjusted sound; use the desktop export for this film');
+    }
+    this.fetchSounds();
+    const decoded = await Promise.all(sounds.map(async (sound) => ({ sound, buffer: await this.buffers.get(sound.src)?.buffer ?? null })));
+    const available = decoded.filter((item): item is { sound: Sound; buffer: AudioBuffer } => item.buffer != null);
+    if (!available.length) return null;
+    if (typeof OfflineAudioContext === 'undefined') throw new Error('Offline Web Audio is unavailable in this browser');
+    const sampleRate = Math.max(48_000, ...available.map((item) => item.buffer.sampleRate));
+    const offline = new OfflineAudioContext(2, Math.max(1, Math.ceil((end - start) * sampleRate)), sampleRate);
+    for (const { sound, buffer } of available) {
+      const overlapStart = Math.max(start, sound.at);
+      const overlapEnd = Math.min(end, sound.at + lengthOf(sound));
+      if (!(overlapEnd > overlapStart)) continue;
+      const source = offline.createBufferSource(); source.buffer = buffer;
+      const gain = offline.createGain();
+      const offset = overlapStart - start;
+      const local = overlapStart - sound.at;
+      const steps = fadeSteps(local, lengthOf(sound), sound.fade);
+      gain.gain.setValueAtTime(sound.volume * steps[0]![1], offset);
+      for (const [at, value] of steps.slice(1)) {
+        const filmAt = sound.at + at;
+        if (filmAt > overlapEnd) break;
+        gain.gain.linearRampToValueAtTime(sound.volume * value, filmAt - start);
+      }
+      source.connect(gain).connect(offline.destination);
+      source.start(offset, fileTime(sound, overlapStart), overlapEnd - overlapStart);
+    }
+    return offline.startRendering();
+  }
+
   /** Only these clips are heard (the tracks soloed), or all (null); playing goes on from where it is. */
   setHeard(clips: ReadonlySet<string> | null) {
     const same = clips === this.heard || (clips && this.heard && clips.size === this.heard.size && [...clips].every((c) => this.heard!.has(c)));

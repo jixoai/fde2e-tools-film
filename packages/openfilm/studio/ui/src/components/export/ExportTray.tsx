@@ -6,7 +6,7 @@
  * its own words. It is there while there are exports to show, until the person closes it; the project's event stream
  * tells it every change.
  */
-import { Ban, Check, ChevronDown, ChevronUp, CircleAlert, FolderOpen, Loader2, Play, X } from 'lucide-react';
+import { Ban, Check, ChevronDown, ChevronUp, CircleAlert, Download, FolderOpen, Loader2, Play, X } from 'lucide-react';
 import React from 'react';
 
 import { projectEvents, studioConnection } from '@/api';
@@ -54,7 +54,16 @@ export interface ExportTrayHandle {
  */
 export const ExportTray = React.forwardRef<ExportTrayHandle, { projectId: string; onError?: (message: string) => void; inset?: number; webJobs?: boolean }>(function ExportTray({ projectId, onError, inset = 0, webJobs = false }, ref) {
   const t = useT();
-  const fileAction = (run: Promise<void>) => { void run.catch(() => onError?.(t('exportTray.fileGone'))); };
+  const fileAction = (job: ExportJob, mode: 'open' | 'reveal') => {
+    if (webJobs) {
+      void Promise.all([import('@/web/web-export'), import('@/web/opfs')])
+        .then(([web, store]) => web.downloadWebExport(projectId, job.id, store.readFileBytes))
+        .catch(() => onError?.(t('exportTray.fileGone')));
+      return;
+    }
+    void (mode === 'open' ? openExport(projectId, job.id) : revealExport(projectId, job.id))
+      .catch(() => onError?.(t('exportTray.fileGone')));
+  };
   const [jobs, setJobs] = React.useState<ExportJob[]>([]);
   const [collapsed, setCollapsed] = React.useState(false);
   const [dismissed, setDismissed] = React.useState<Set<string>>(() => closedOf(projectId));
@@ -207,22 +216,24 @@ export const ExportTray = React.forwardRef<ExportTrayHandle, { projectId: string
                   <span className="flex shrink-0 items-center gap-0.5">
                     <button
                       type="button"
-                      onClick={() => fileAction(openExport(projectId, job.id))}
-                      title={t('exportTray.open')}
-                      aria-label={t('exportTray.open')}
+                      onClick={() => fileAction(job, 'open')}
+                      title={webJobs ? t('assets.download') : t('exportTray.open')}
+                      aria-label={webJobs ? t('assets.download') : t('exportTray.open')}
                       className="rounded-md p-1 text-[var(--text-muted)] transition hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
                     >
-                      <Play size={13} />
+                      {webJobs ? <Download size={13} /> : <Play size={13} />}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => fileAction(revealExport(projectId, job.id))}
-                      title={t('exportTray.reveal')}
-                      aria-label={t('exportTray.reveal')}
-                      className="rounded-md p-1 text-[var(--text-muted)] transition hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
-                    >
-                      <FolderOpen size={13} />
-                    </button>
+                    {!webJobs ? (
+                      <button
+                        type="button"
+                        onClick={() => fileAction(job, 'reveal')}
+                        title={t('exportTray.reveal')}
+                        aria-label={t('exportTray.reveal')}
+                        className="rounded-md p-1 text-[var(--text-muted)] transition hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+                      >
+                        <FolderOpen size={13} />
+                      </button>
+                    ) : null}
                   </span>
                 ) : null}
               </div>

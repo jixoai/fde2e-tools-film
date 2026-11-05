@@ -39,6 +39,7 @@ import {
   type ExportVideoCodec,
 } from '@/lib/export-spec';
 import * as storePut from '@/web/opfs';
+import { isWeb } from '@/web/backend';
 import {
   formatBytes,
   formatFilmTime,
@@ -500,7 +501,10 @@ export function ExportCenter(props: ExportCenterProps) {
   /* "about 0.8 MB–8 MB"; one size when both ends read the same */
   const estText = estBytes[1] > 0 ? [...new Set(estBytes.map((b) => formatBytes(b)))].join('–') : '';
 
-  const folder = s.folder || defaultFolder;
+  /* The pure-Web face writes inside the project's OPFS `downloads/`; it has no server
+     settings endpoint from which to learn a host filesystem folder. Keep that virtual folder
+     explicit so the same official export dialog is actionable rather than permanently disabled. */
+  const folder = s.folder || defaultFolder || (isWeb() ? 'downloads' : '');
 
   const fileCount = requests.reduce((n, r) => {
     if (r.kind === 'stills' && r.as === 'files') return n + (r.at?.length ?? 1);
@@ -548,7 +552,7 @@ export function ExportCenter(props: ExportCenterProps) {
         const queued: ExportJob[] = [];
         for (const request of named) {
           try {
-            queued.push(startWebExport(props.projectId, request, source, { putFile: (id, path, data) => storePut.putFile(id, path, data) }));
+            queued.push(startWebExport(props.projectId, request, source, { putFile: storePut.putFile, readFile: storePut.readFileBytes }));
           } catch (e) {
             if (!queued.length) { setResult({ ok: false, text: e instanceof Error ? e.message : String(e) }); setWorking(null); return; }
             break; // the first landed; the rest wait for it (one queue)

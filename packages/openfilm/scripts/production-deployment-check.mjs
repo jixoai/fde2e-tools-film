@@ -65,14 +65,62 @@ const callTool = (page, name, input = {}) => page.evaluate(async ([toolName, arg
 }, [name, input]);
 const waitForExample = (page, timeout = 180_000) => page.waitForFunction(() => {
   const frame = document.querySelector('iframe[title="film"]');
+  const intro = frame?.contentDocument?.querySelector('iframe#intro');
   return !document.body.innerText.includes('Drawing the first frame')
     && !document.body.innerText.includes('正在绘制第一帧')
-    && Number(frame?.contentWindow?.film?.duration) > 90;
+    && Number(frame?.contentWindow?.film?.duration) > 90
+    && intro != null && getComputedStyle(intro).visibility === 'visible';
 }, undefined, { timeout, polling: 250 });
 const previewState = (page) => page.evaluate(() => {
   const frame = document.querySelector('iframe[title="film"]');
   return { duration: Number(frame?.contentWindow?.film?.duration), url: location.href };
 });
+const inspectVideo = (page, projectId, path) => page.evaluate(async ({ id, outputPath }) => {
+  const encoded = outputPath.split('/').map(encodeURIComponent).join('/');
+  const response = await fetch(`/wf/${encodeURIComponent(id)}/${encoded}`, { headers: { Range: 'bytes=0-' } });
+  if (!response.ok) throw new Error(`output fetch failed: ${response.status}`);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const video = document.createElement('video');
+  video.preload = 'auto'; video.src = url;
+  try {
+    await new Promise((resolveLoad, reject) => {
+      video.addEventListener('loadedmetadata', resolveLoad, { once: true });
+      video.addEventListener('error', () => reject(new Error(video.error?.message ?? 'video metadata failed')), { once: true });
+    });
+    video.currentTime = Math.min(0.75, Math.max(0, video.duration - 0.05));
+    await new Promise((resolveSeek, reject) => {
+      video.addEventListener('seeked', resolveSeek, { once: true });
+      video.addEventListener('error', () => reject(new Error(video.error?.message ?? 'video seek failed')), { once: true });
+    });
+    if (typeof video.requestVideoFrameCallback === 'function') {
+      await new Promise((resolveFrame) => { video.requestVideoFrameCallback(() => resolveFrame()); setTimeout(resolveFrame, 500); });
+    }
+    const canvas = document.createElement('canvas'); canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('video pixel probe has no 2D canvas');
+    ctx.drawImage(video, 0, 0);
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let nonBlack = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (pixels[index] + pixels[index + 1] + pixels[index + 2] > 24) nonBlack += 1;
+    }
+    let audio = null;
+    try {
+      const audioContext = new AudioContext();
+      const decoded = await audioContext.decodeAudioData(await blob.arrayBuffer());
+      audio = { channels: decoded.numberOfChannels, duration: decoded.duration };
+      await audioContext.close();
+    } catch { /* an absent audio track is asserted below */ }
+    return {
+      status: response.status, contentRange: response.headers.get('content-range'), bytes: blob.size, mime: blob.type,
+      duration: video.duration, width: video.videoWidth, height: video.videoHeight, seeked: video.currentTime,
+      nonBlack: nonBlack / (pixels.length / 4), audio,
+    };
+  } finally {
+    video.remove(); URL.revokeObjectURL(url);
+  }
+}, { id: projectId, outputPath: path });
 
 const requests = [];
 const responses = [];
@@ -233,13 +281,13 @@ try {
   expect(exampleState.tracks?.length === 2 && preview.duration > 90, `film_state/preview=${JSON.stringify({ exampleState, preview })}`);
   expect(opfs.files >= 100, `OPFS files=${opfs.files}`);
   expect(opfs.range.status === 206 && opfs.range.bytes === 32 && opfs.range.contentRange?.startsWith('bytes 0-31/'), `OPFS Range=${JSON.stringify(opfs.range)}`);
-  const foreignRequests = requests.filter(({ url }) => /^https?:/.test(url) && new URL(url).origin !== origin);
-  expect(foreignRequests.length === 0, `foreign requests=${JSON.stringify(foreignRequests)}`);
+  const foreignAtExample = requests.filter(({ url }) => /^https?:/.test(url) && new URL(url).origin !== origin);
+  expect(foreignAtExample.length === 0, `foreign requests=${JSON.stringify(foreignAtExample)}`);
   const exampleShot = await screenshot(page, 's3-bundled-example.png');
   steps.push({
     id: 'S3', intent: '通过线上 WebMCP 载入 checksum 校验的 One Prompt 示例',
     expect: '普通 OPFS 项目打开；90.9s/2 轨；≥100 文件；OPFS SW Range=206；全部 HTTP(S) 请求同源',
-    assertion: `project=${exampleId}; duration=${preview.duration}; tracks=${exampleState.tracks.length}; OPFS files=${opfs.files}; SW Range=${opfs.range.status}/${opfs.range.bytes}B; foreign requests=${foreignRequests.length}`,
+    assertion: `project=${exampleId}; duration=${preview.duration}; tracks=${exampleState.tracks.length}; OPFS files=${opfs.files}; SW Range=${opfs.range.status}/${opfs.range.bytes}B; foreign requests=${foreignAtExample.length}`,
     ok: true, image: exampleShot.relative, imageMeta: `1440×900 · 真实生产项目页 · sha256 ${exampleShot.sha256.slice(0, 16)}…`,
   });
 
@@ -280,6 +328,37 @@ try {
     ok: true, image: reloadShot.relative, imageMeta: `1440×900 · 刷新后的同一项目；诊断卡由门禁临时注入并明确标注非产品 UI · sha256 ${reloadShot.sha256.slice(0, 16)}…`,
   });
 
+  const render = await callTool(page, 'produce_render', {
+    kind: 'video', name: 'production-release-seek', from: 0, to: 1,
+    codec: 'h264', audio: true, fps: 4, shortEdge: 64, wait: true,
+  });
+  expect(render.ok === true && render.status === 'done' && render.paths?.length === 1 && render.bytes > 0, `production render=${JSON.stringify(render)}`);
+  const media = await inspectVideo(page, exampleId, render.paths[0]);
+  expect(media.status === 206 && media.contentRange?.startsWith('bytes 0-'), `production output Range=${JSON.stringify(media)}`);
+  expect(media.mime === 'video/mp4' && media.duration >= 0.9 && media.duration <= 1.6, `production output metadata=${JSON.stringify(media)}`);
+  expect(media.seeked > 0.5 && media.nonBlack > 0.01, `production output seek/pixels=${JSON.stringify(media)}`);
+  expect(media.audio?.channels === 2 && media.audio.duration >= 0.9, `production output audio=${JSON.stringify(media.audio)}`);
+  const renderStatus = await callTool(page, 'produce_export_status');
+  const renderJob = renderStatus.jobs?.find((job) => job.id === render.jobId);
+  expect(renderJob?.status === 'done' && renderJob.outputs?.[0] === render.paths[0] && renderJob.bytes === render.bytes, `production output status=${JSON.stringify(renderStatus)}`);
+  await page.locator('button[aria-label="设置"]').click({ force: true });
+  const settings = page.getByRole('dialog');
+  await settings.waitFor({ state: 'visible', timeout: 30_000 });
+  const settingsText = await settings.innerText();
+  expect(settingsText.includes('FDE2E Film 0.3.0'), `production About=${settingsText}`);
+  const exportShot = await screenshot(page, 's5-production-export.png');
+  await page.keyboard.press('Escape');
+  steps.push({
+    id: 'S5', intent: '在生产站用 WebMCP 真导出 H.264＋AAC，并从 OPFS Range URL seek',
+    expect: 'job done；MP4 Range=206；可 seek、非黑、有双声道音轨；About=0.3.0；运行时仍零外域',
+    assertion: `job=${render.jobId}; bytes=${media.bytes}; range=${media.status}/${media.contentRange}; duration=${media.duration}s; seek=${media.seeked}s; nonBlack=${media.nonBlack.toFixed(3)}; audio=${media.audio.channels}ch; version=0.3.0`,
+    ok: true, image: exportShot.relative, imageMeta: `1440×900 · 生产候选 About＋真实导出已落 OPFS · sha256 ${exportShot.sha256.slice(0, 16)}…`,
+  });
+
+  const foreignRequests = requests.filter(({ url }) => /^https?:/.test(url) && new URL(url).origin !== origin);
+  const forbiddenOmni = requests.filter(({ url }) => /(^|\.)omni\.fde2e\.com$/i.test(new URL(url).hostname));
+  expect(foreignRequests.length === 0, `foreign requests after export=${JSON.stringify(foreignRequests)}`);
+  expect(forbiddenOmni.length === 0, `production Omni requests=${JSON.stringify(forbiddenOmni)}`);
   const cleanup = await callTool(page, 'projects_delete', { id: exampleId });
   expect(cleanup.ok === true, `cleanup=${JSON.stringify(cleanup)}`);
   const httpErrors = responses.filter(({ status }) => status >= 400);
@@ -294,18 +373,19 @@ try {
     ok: true, base: origin, browser: browser.version(), executablePath, dns, cold, contract,
     worker: workerResult,
     example: { id: exampleId, state: exampleState, preview, opfs, persisted, persistedPreview, reload: { controlledOnFirstReload, elapsedMs: reloadElapsedMs }, cleanup },
+    productionRender: { receipt: render, media, status: renderJob, about: 'FDE2E Film 0.3.0' },
     serviceWorker,
-    network: { requestCount: requests.length, responseCount: responses.length, coldFfmpeg, ffmpegRequests, ffmpegResponses, foreignRequests, httpErrors },
+    network: { requestCount: requests.length, responseCount: responses.length, coldFfmpeg, ffmpegRequests, ffmpegResponses, foreignRequests, forbiddenOmni, httpErrors },
     pageErrors, consoleErrors,
-    screenshots: [homeShot, workerShot, exampleShot, reloadShot],
+    screenshots: [homeShot, workerShot, exampleShot, reloadShot, exportShot],
   };
   writeFileSync(join(evidenceDir, 'result.json'), `${JSON.stringify(result, null, 2)}\n`);
   const day = new Date().toISOString().slice(0, 10);
   writeFileSync(join(evidenceDir, 'steps.json'), `${JSON.stringify({
     title: 'web-openfilm-editor 6.1 · 生产部署端到端验收',
     brand: 'FDE2E™ Film · film.tool.fde2e.com',
-    meta: `${day} · Chromium ${result.browser} · production HTTPS · 4 steps`,
-    thesis: '生产域名、TLS、Nginx Range/MIME/SPA、无 COI、同源 ST ffmpeg Worker/WASM、OPFS 示例与刷新持久化均由真实 Chromium 复算通过；普通进站零 wasm 成本，运行时零跨源请求。',
+    meta: `${day} · Chromium ${result.browser} · production HTTPS · 5 steps`,
+    thesis: '生产域名、TLS、Nginx Range/MIME/SPA、无 COI、同源 ST ffmpeg Worker/WASM、OPFS 示例/刷新，以及真实 H.264＋AAC 导出、Range seek 均由真实 Chromium 复算通过；普通进站零 wasm 成本，运行时零跨源请求。',
     env: [
       ['被测入口', origin],
       ['浏览器', `Chromium ${result.browser} · fresh context · 1440×900 · zh-CN`],

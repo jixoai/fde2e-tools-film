@@ -62,11 +62,11 @@ const EXPECT = {
 /** 护栏对表（L0 只读必须 readOnlyHint:true；破坏性必须 consequentialHint:true）。 */
 const GUARDRAIL = {
   readOnly: ["film_state", "film_problems", "film_overrides", "edit_read_page", "edit_list_versions",
-    "projects_list", "projects_list_media", "projects_export_package", "produce_look", "produce_render", "produce_export_status"],
+    "projects_list", "projects_list_media", "projects_export_package", "produce_export_status"],
   consequential: ["edit_restore_overrides", "edit_write_page", "edit_checkout_version", "edit_discard_changes", "projects_delete"],
   mutation: ["edit_apply", "edit_move_clip", "edit_remove_clip", "edit_insert_clip", "edit_split_clip", "edit_trim_clip",
     "edit_set_speed", "edit_set_volume", "edit_set_box", "edit_set_props", "edit_set_track", "edit_reorder_tracks",
-    "edit_set_stage", "edit_save_version", "edit_copy_version", "projects_create", "projects_open", "projects_load_example", "projects_import_media"],
+    "edit_set_stage", "edit_save_version", "edit_copy_version", "projects_create", "projects_open", "projects_load_example", "projects_import_media", "produce_look", "produce_render"],
 };
 
 const NAME_RE = /^[a-zA-Z0-9_.-]{1,128}$/;
@@ -278,13 +278,19 @@ async function assertFullChain(browser) {
     const wpage2 = await call(page, "edit_write_page", { path: "notes.md", text: "again", expect: "stale" });
     if (!wpage2.error || !/mismatch/.test(wpage2.error)) throw new Error(`expect 撞车应拒绝: ${JSON.stringify(wpage2)}`);
 
-    // ── produce 诚实性（3.3 泵接线未到：工具在、如实答 unavailable，不谎报成功）──
-    const look = await call(page, "produce_look", {});
-    if (look.ok === true) throw new Error("produce_look 未接线却谎报成功");
-    const render = await call(page, "produce_render", {});
-    if (render.ok === true) throw new Error("produce_render 未接线却谎报成功");
+    // ── produce 全链在真实预览 E2E 单独跑；这里守 schema/负面边界与状态面 ──
+    const lookBad = await call(page, "produce_look", { at: -1 });
+    if (!lookBad.error || !/0 or more/.test(lookBad.error)) throw new Error(`produce_look 非法秒未拒绝: ${JSON.stringify(lookBad)}`);
+    const renderBad = await call(page, "produce_render", { kind: "video", from: 3, to: 1 });
+    if (!renderBad.error || !/duration|range/.test(renderBad.error)) throw new Error(`produce_render 非法范围未拒绝: ${JSON.stringify(renderBad)}`);
+    const lookFrameBad = await call(page, "produce_look", { frame: "not-a-ratio" });
+    if (!lookFrameBad.error || !/frame/.test(lookFrameBad.error)) throw new Error(`produce_look 非法画幅未拒绝: ${JSON.stringify(lookFrameBad)}`);
+    const renderKindBad = await call(page, "produce_render", { kind: "audio" });
+    if (!renderKindBad.error || !/kind/.test(renderKindBad.error)) throw new Error(`produce_render 非法类型未拒绝: ${JSON.stringify(renderKindBad)}`);
+    const renderFillBad = await call(page, "produce_render", { fill: "stretch" });
+    if (!renderFillBad.error || !/fill/.test(renderFillBad.error)) throw new Error(`produce_render 非法适配未拒绝: ${JSON.stringify(renderFillBad)}`);
     const exportStatus = await call(page, "produce_export_status", {});
-    if (exportStatus.encodeAvailable === undefined) throw new Error(`produce_export_status 应答环境能力: ${JSON.stringify(exportStatus)}`);
+    if (exportStatus.encodeAvailable === undefined || !Array.isArray(exportStatus.jobs)) throw new Error(`produce_export_status 应答环境能力/任务: ${JSON.stringify(exportStatus)}`);
 
     // ── 非法入参矩阵（页面侧校验＝承重墙；execute 不 reject）──
     const matrix = [
@@ -353,7 +359,7 @@ async function assertFullChain(browser) {
   if (errors.length) throw new Error(`页面错误 ${errors.length}: ${errors[0]}`);
   record(`[项目族] create→open→insert→split(两半相接,${out.createdId ? "x-b 契约" : ""})→trim→版本层→页读写→包(zip 魔数)→reload→delete；load_example(${out.exampleId}) notice/OFL/AI 标识；media(base64→${out.mediaPath}/URL 白单拒绝)全链`, true);
   record("[edit 链] 负面护栏（speed=0 人话拒/gone clip 拒/锁定轨拒）＋非法矩阵 9 例 ok:false 不 reject", true);
-  record("[produce] 未接线工具如实答 unavailable（不谎报成功）＋export_status 答环境能力", true);
+  record("[produce] look/render 秒数/范围/画幅/类型/适配护栏＋export_status 答环境能力/任务", true);
 }
 
 /** polyfill 冒烟（无 flag 同路——本站静态面 polyfill 即页面默认路；断言 B2 偏差形态）。 */
@@ -384,6 +390,10 @@ async function assertPolyfillSmoke(browser) {
 async function assertOtGate(browser) {
   const { out } = await withPage(browser, async (page, base) => {
     await page.goto(`${base}/index-web.html`, { waitUntil: "load" });
+    /* Web boot now waits until the OPFS Service Worker controls the fresh client before exposing
+       either UI or tools. The document load event can precede that controllerchange, so observe
+       the registry instead of sampling the sub-frame where the boot race used to live. */
+    await waitTools(page, ["projects_create"]);
     return page.evaluate(() => ({ hasMc: Boolean(document.modelContext), hasRegistry: Boolean(window.__webmcp_registered_tools) }));
   });
   // 本站不申请 OT：无 flag 下 modelContext 只能来自 polyfill。若某天原生默认开启，此断言变红＝

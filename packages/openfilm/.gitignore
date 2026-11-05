@@ -10,3 +10,6 @@ studio/ui/dist/
 studio/ui/public/examples/examples.json
 studio/ui/public/examples/one-prompt/manifest.json
 studio/ui/public/examples/one-prompt/vendor/
+# local browser/E2E evidence (published through the main repository report tunnel, never committed here)
+.examples-check/
+e2e-out/
