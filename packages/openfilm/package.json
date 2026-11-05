@@ -66,6 +66,7 @@
     "prebuild:ui": "node scripts/vendor-ffmpeg.mjs && node scripts/vendor-examples.mjs",
     "webmcp-check": "node scripts/webmcp-check.mjs",
     "ffmpeg-deployment-check": "node scripts/ffmpeg-deployment-check.mjs",
+    "production-deployment-check": "node scripts/production-deployment-check.mjs",
     "vendor-ffmpeg": "node scripts/vendor-ffmpeg.mjs",
     "vendor-examples": "node scripts/vendor-examples.mjs",
     "preview:web": "node scripts/web-static-server.mjs",
