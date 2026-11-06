@@ -31,6 +31,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      # Studio browser tests serve this build; a clean checkout otherwise serves
+      # the "editor is not built" placeholder and every UI assertion times out.
+      - run: pnpm build
       # Ubuntu's packages (Playwright's system libraries and fonts, ffmpeg) come through apt, whose mirror at times took
       # 20 to 40 minutes for them. The .deb files are kept in the Actions cache, by runner image: apt fetches only what
       # changed since. A stalled mirror is left for the next one after 30 s (not 120), a failed download is tried
