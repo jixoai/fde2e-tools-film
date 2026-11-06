@@ -736,6 +736,64 @@ test('a page Windows had no network buffer for (net::ERR_NO_BUFFER_SPACE) is loa
   }
 });
 
+test('child-page buffer exhaustion retries the whole open and closes each failed context', { timeout: 60_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'of-child-no-buffer-'));
+  writeFileSync(join(dir, 'badge.html'), page('recovered', 1));
+  writeFileSync(join(dir, 'film.html'), filmHtml({ stage: { w: 320, h: 180 }, tracks: [{ clips: [{ src: 'badge.html', time: [0, 1] }] }] }));
+  const site = await serve(dir);
+  const browser = await launch();
+  const failing = (n, why) => {
+    const state = { opened: 0, closed: 0, childRequests: 0 };
+    return { state, browser: /** @type {any} */ ({ newContext: async (options) => {
+      assert.equal(state.opened, state.closed, 'previous failed context must close before retry');
+      const attempt = ++state.opened;
+      const context = await browser.newContext(options);
+      context.on('close', () => state.closed++);
+      await context.route('**/badge.html', (route) => {
+        if (route.request().resourceType() !== 'document') return route.continue();
+        state.childRequests++;
+        return attempt <= n ? route.abort('failed') : route.continue();
+      });
+      const newPage = context.newPage.bind(context);
+      context.newPage = async () => {
+        const p = await newPage();
+        const on = p.on.bind(p);
+        // Chromium's OS-specific NO_BUFFER_SPACE cannot be requested by route.abort.
+        // Keep the real failed child navigation and translate only its error code.
+        p.on = (event, listener) => on(event, event === 'requestfailed' ? (r) => listener(r.resourceType() === 'document' ? {
+          failure: () => ({ errorText: why }), url: () => r.url(),
+          resourceType: () => r.resourceType(), method: () => r.method(),
+        } : r) : listener);
+        return p;
+      };
+      return context;
+    } }) };
+  };
+  try {
+    const recovered = failing(2, 'net::ERR_NO_BUFFER_SPACE');
+    const film = await FilmPage.open(recovered.browser, site.url, 'film.html');
+    assert.equal(film.meta.duration, 1);
+    assert.equal(recovered.state.opened, 3);
+    assert.equal(recovered.state.closed, 2);
+    assert.equal(recovered.state.childRequests, 3);
+    assert.deepEqual(film.problems, [], 'failed attempts must not taint the recovered page');
+    await film.seek(0.5);
+    await film.close();
+    assert.equal(recovered.state.closed, 3);
+    const permanent = failing(3, 'net::ERR_NO_BUFFER_SPACE');
+    await assert.rejects(FilmPage.open(permanent.browser, site.url, 'film.html'), /ERR_NO_BUFFER_SPACE.*badge\.html/);
+    assert.deepEqual(permanent.state, { opened: 3, closed: 3, childRequests: 3 });
+    const other = failing(1, 'net::ERR_CONNECTION_REFUSED');
+    await assert.rejects(FilmPage.open(other.browser, site.url, 'film.html'), /ERR_CONNECTION_REFUSED/);
+    assert.deepEqual(other.state, { opened: 1, closed: 1, childRequests: 1 });
+    assert.equal(browser.contexts().length, 0);
+  } finally {
+    await browser.close();
+    await site.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a host waits for a film as long as it keeps loading; a page that never gets further fails in time', { timeout: 60_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'of-progress-'));
   /* five pages ready one after another, 0.5 s apart: 2.5 s in all, longer than the host waits without news */

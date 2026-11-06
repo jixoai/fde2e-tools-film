@@ -491,102 +491,101 @@ const stuck = async (/** @type {import('playwright-core').Page} */ page) =>
 /** One web page in one browser tab. */
 export class FilmPage {
   static async open(browser, origin, entry, { scale = 1, size = null, transparent = false, black = false, offline = false, network = {}, waitMs = 10_000, readyMs = READY_MS, onVideoNotShown = videoNotShown } = {}) {
-    const film = new FilmPage();
-    film.problems = [];
-    film.onVideoNotShown = onVideoNotShown;
-    film.browser = browser;
-    film.origin = origin;
-    film.entry = entry;
-    film.scale = scale;
-    /* `size`: a page clip's (SPEC §1), what a page without a size of its own is laid out at, from its first layout */
-    const laid = size?.w > 0 && size?.h > 0 ? { width: Math.round(size.w), height: Math.round(size.h) } : { width: 1920, height: 1080 };
-    film.context = await browser.newContext({ viewport: laid, deviceScaleFactor: scale });
-    film.page = await film.context.newPage();
-    const problems = film.problems;
-    film.page.on('pageerror', (e) => problems.push({ kind: 'error', message: e.message }));
-    film.page.on('console', (m) => { if (m.type() === 'error' && !/status of 404/.test(m.text())) problems.push({ kind: 'console', message: m.text() }); }); // 404s are reported by URL below
-    film.page.on('requestfailed', (r) => {
-      const why = r.failure()?.errorText ?? 'failed';
-      if (why === 'net::ERR_ABORTED' && r.resourceType() === 'media') return; // media elements cancel range requests routinely
-      if (why === 'net::ERR_ABORTED' && r.method() === 'HEAD') return; // a file's presence asked (timeline.mjs): its status is the answer
-      if (why === 'net::ERR_ABORTED' && new URL(r.url()).pathname.endsWith('/__film/frame-duration')) return; // given up on after 10 s (timeline.mjs frameOf): the frame is drawn from the guess
-      if (why === 'net::ERR_BLOCKED_BY_CLIENT') return; // reported by the offline route with its reason
-      problems.push({ kind: 'request', message: `${why} ${r.url()}` });
-    });
-    film.page.on('response', (r) => { if (r.status() >= 400 && !r.url().endsWith('/favicon.ico')) problems.push({ kind: 'request', message: `${r.status()} ${r.url()}` }); });
-    if (offline) {
-      // A host that plays pages in an isolated surface with only some origins open (`network.allow`): probe them the
-      // same way, so a page that reaches elsewhere fails here, with a reason, instead of later as a blank clip.
-      // `network.fetch` may answer the open origins itself (a cache), so checking a page twice does not fetch twice.
-      const allow = new Set(network.allow ?? []);
-      await film.context.route((url) => !url.href.startsWith(origin + '/') && !/^(data|blob):/.test(url.protocol), async (route) => {
-        const url = route.request().url();
-        let at = '';
-        try { at = new URL(url).origin; } catch { /* not a URL */ }
-        if (!allow.has(at)) {
-          problems.push({ kind: 'request', message: `web pages load only from their own folder${allow.size ? ` and ${[...allow].map((o) => o.replace('https://', '')).join(', ')}` : ''}: ${url}` });
-          return route.abort('blockedbyclient');
-        }
-        if (!network.fetch) return route.continue();
-        try {
-          const answer = await network.fetch(url, route.request().headers());
-          return route.fulfill({ status: answer.status, headers: answer.headers, body: answer.body });
-        } catch (e) {
-          problems.push({ kind: 'request', message: `could not load ${url}: ${e?.message ?? e}` });
-          return route.abort('blockedbyclient');
-        }
-      });
-    }
-    /* a page that never loads is closed: its tab would go on running. Windows sometimes has no socket buffer free for
-       a moment (net::ERR_NO_BUFFER_SPACE, seen with many browsers or servers at once): that page is loaded again */
+    // Windows can exhaust socket buffers while a child clip is becoming ready,
+    // after top-level navigation already succeeded. Retry the complete open with
+    // a fresh context; all other failures keep their original error and fail fast.
     for (let tries = 1; ; tries++) {
-      const missed = await film.page.goto(new URL(entry, origin + '/').href, { waitUntil: 'load', timeout: 60_000 }).then(() => null, (e) => e);
-      if (!missed) break;
-      if (tries === OPEN_TRIES || !/net::ERR_NO_BUFFER_SPACE/.test(String(missed?.message))) {
-        await film.context.close();
-        throw missed;
+      const film = new FilmPage();
+      film.problems = [];
+      film.onVideoNotShown = onVideoNotShown;
+      film.browser = browser;
+      film.origin = origin;
+      film.entry = entry;
+      film.scale = scale;
+      /* `size`: a page clip's (SPEC §1), what a page without a size of its own is laid out at, from its first layout */
+      const laid = size?.w > 0 && size?.h > 0 ? { width: Math.round(size.w), height: Math.round(size.h) } : { width: 1920, height: 1080 };
+      try {
+        film.context = await browser.newContext({ viewport: laid, deviceScaleFactor: scale });
+        film.page = await film.context.newPage();
+        const problems = film.problems;
+        film.page.on('pageerror', (e) => problems.push({ kind: 'error', message: e.message }));
+        film.page.on('console', (m) => { if (m.type() === 'error' && !/status of 404/.test(m.text())) problems.push({ kind: 'console', message: m.text() }); }); // 404s are reported by URL below
+        film.page.on('requestfailed', (r) => {
+          const why = r.failure()?.errorText ?? 'failed';
+          if (why === 'net::ERR_ABORTED' && r.resourceType() === 'media') return; // media elements cancel range requests routinely
+          if (why === 'net::ERR_ABORTED' && r.method() === 'HEAD') return; // a file's presence asked (timeline.mjs): its status is the answer
+          if (why === 'net::ERR_ABORTED' && new URL(r.url()).pathname.endsWith('/__film/frame-duration')) return; // given up on after 10 s (timeline.mjs frameOf): the frame is drawn from the guess
+          if (why === 'net::ERR_BLOCKED_BY_CLIENT') return; // reported by the offline route with its reason
+          problems.push({ kind: 'request', message: `${why} ${r.url()}` });
+        });
+        film.page.on('response', (r) => { if (r.status() >= 400 && !r.url().endsWith('/favicon.ico')) problems.push({ kind: 'request', message: `${r.status()} ${r.url()}` }); });
+        if (offline) {
+          // A host that plays pages in an isolated surface with only some origins open (`network.allow`): probe them the
+          // same way, so a page that reaches elsewhere fails here, with a reason, instead of later as a blank clip.
+          // `network.fetch` may answer the open origins itself (a cache), so checking a page twice does not fetch twice.
+          const allow = new Set(network.allow ?? []);
+          await film.context.route((url) => !url.href.startsWith(origin + '/') && !/^(data|blob):/.test(url.protocol), async (route) => {
+            const url = route.request().url();
+            let at = '';
+            try { at = new URL(url).origin; } catch { /* not a URL */ }
+            if (!allow.has(at)) {
+              problems.push({ kind: 'request', message: `web pages load only from their own folder${allow.size ? ` and ${[...allow].map((o) => o.replace('https://', '')).join(', ')}` : ''}: ${url}` });
+              return route.abort('blockedbyclient');
+            }
+            if (!network.fetch) return route.continue();
+            try {
+              const answer = await network.fetch(url, route.request().headers());
+              return route.fulfill({ status: answer.status, headers: answer.headers, body: answer.body });
+            } catch (e) {
+              problems.push({ kind: 'request', message: `could not load ${url}: ${e?.message ?? e}` });
+              return route.abort('blockedbyclient');
+            }
+          });
+        }
+        await film.page.goto(new URL(entry, origin + '/').href, { waitUntil: 'load', timeout: 60_000 });
+        /* what else the page said, once (not what `said` already says), and failed files by their path in the folder */
+        const failed = (said = '') => {
+          const req = [...new Set(problems.filter((p) => p.kind === 'request').map((p) => p.message.replace(`${origin}/`, '')))]
+            .filter((m) => !said.includes(m.slice(m.indexOf(' ') + 1)));
+          /* by its first line: what is said is cut there */
+          const err = problems.filter((p) => p.kind === 'error').map((p) => p.message.replace(/^Error: /, '')).filter((m) => !said.includes(m.split('\n')[0]));
+          return `${err.length ? `; the page threw: ${err.join(' | ')}` : ''}${req.length ? `; failed to load: ${req.join(', ')}` : ''}`;
+        };
+        try {
+          await film.page.waitForFunction(() => window.film && typeof window.film.frame === 'function', null, { timeout: waitMs, polling: 50 });
+        } catch {
+          throw new FrameError(`window.film with a frame() function did not appear within ${waitMs / 1000} s${failed()}`);
+        }
+        /* a ready that never comes (a file that never loads, a loop that never ends) is said, rather than waited on for ever */
+        film.meta = await whileMoving(film.page, film.page.evaluate(async (laid) => {
+          const a = window.film;
+          await (typeof a.ready === 'function' ? a.ready() : a.ready);
+          await document.fonts?.ready;
+          /* a page without a size of its own, opened on its own, is 1920 × 1080, or its clip's `size` (inside a film it
+             is the stage's); one without a duration has no end (null) */
+          const sized = a.width != null || a.height != null;
+          return { duration: a.duration ?? null, width: sized ? a.width : laid.width, height: sized ? a.height : laid.height, sized,
+            /* an edit's sound, from the built-in timeline (a single page has none) */
+            sounds: window.__filmSounds?.() ?? [] };
+        }, laid), readyMs, `film.ready did not finish within ${readyMs / 1000} s`).catch(async (e) => {
+          const late = e instanceof FrameError ? await stuck(film.page) : '';
+          if (e instanceof FrameError) throw new FrameError(`${entry.startsWith('__film/') ? '' : `${entry}: `}${e.message}${late}${failed(e.message)}`);
+          const why = String(e.message).replace(/^page\.evaluate: /, '').split('\n')[0].replace(/^Error: /, '');
+          /* the built-in timeline says what failed in its own words; a page's own ready is named as such */
+          throw new FrameError(`${entry.startsWith('__film/') ? why : `film.ready failed: ${why}`}${failed(why)}`);
+        });
+        if (film.meta.width > 0 && film.meta.height > 0) await film.page.setViewportSize({ width: film.meta.width, height: film.meta.height });
+        film.cdp = await film.context.newCDPSession(film.page);
+        // What a page does not paint is white by the browser's default: transparent for alpha exports, black where the
+        // picture stands for the film (a moment with nothing below is black).
+        if (transparent || black) await film.cdp.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: transparent ? 0 : 1 } });
+        return film;
+      } catch (error) {
+        await film.context?.close().catch(() => {});
+        if (tries === OPEN_TRIES || !/net::ERR_NO_BUFFER_SPACE/.test(String(error?.message))) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 500 * tries));
       }
-      await new Promise((r) => setTimeout(r, 500 * tries));
     }
-    /* what else the page said, once (not what `said` already says), and failed files by their path in the folder */
-    const failed = (said = '') => {
-      const req = [...new Set(problems.filter((p) => p.kind === 'request').map((p) => p.message.replace(`${origin}/`, '')))]
-        .filter((m) => !said.includes(m.slice(m.indexOf(' ') + 1)));
-      /* by its first line: what is said is cut there */
-      const err = problems.filter((p) => p.kind === 'error').map((p) => p.message.replace(/^Error: /, '')).filter((m) => !said.includes(m.split('\n')[0]));
-      return `${err.length ? `; the page threw: ${err.join(' | ')}` : ''}${req.length ? `; failed to load: ${req.join(', ')}` : ''}`;
-    };
-    try {
-      await film.page.waitForFunction(() => window.film && typeof window.film.frame === 'function', null, { timeout: waitMs, polling: 50 });
-    } catch {
-      await film.context.close();
-      throw new FrameError(`window.film with a frame() function did not appear within ${waitMs / 1000} s${failed()}`);
-    }
-    /* a ready that never comes (a file that never loads, a loop that never ends) is said, rather than waited on for ever */
-    film.meta = await whileMoving(film.page, film.page.evaluate(async (laid) => {
-      const a = window.film;
-      await (typeof a.ready === 'function' ? a.ready() : a.ready);
-      await document.fonts?.ready;
-      /* a page without a size of its own, opened on its own, is 1920 × 1080, or its clip's `size` (inside a film it
-         is the stage's); one without a duration has no end (null) */
-      const sized = a.width != null || a.height != null;
-      return { duration: a.duration ?? null, width: sized ? a.width : laid.width, height: sized ? a.height : laid.height, sized,
-        /* an edit's sound, from the built-in timeline (a single page has none) */
-        sounds: window.__filmSounds?.() ?? [] };
-    }, laid), readyMs, `film.ready did not finish within ${readyMs / 1000} s`).catch(async (e) => {
-      const late = e instanceof FrameError ? await stuck(film.page) : '';
-      await film.context.close();
-      if (e instanceof FrameError) throw new FrameError(`${entry.startsWith('__film/') ? '' : `${entry}: `}${e.message}${late}${failed(e.message)}`);
-      const why = String(e.message).replace(/^page\.evaluate: /, '').split('\n')[0].replace(/^Error: /, '');
-      /* the built-in timeline says what failed in its own words; a page's own ready is named as such */
-      throw new FrameError(`${entry.startsWith('__film/') ? why : `film.ready failed: ${why}`}${failed(why)}`);
-    });
-    if (film.meta.width > 0 && film.meta.height > 0) await film.page.setViewportSize({ width: film.meta.width, height: film.meta.height });
-    film.cdp = await film.context.newCDPSession(film.page);
-    // What a page does not paint is white by the browser's default: transparent for alpha exports, black where the
-    // picture stands for the film (a moment with nothing below is black).
-    if (transparent || black) await film.cdp.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: transparent ? 0 : 1 } });
-    return film;
   }
 
   /** Draw t and wait until the picture is complete; a frame that never finishes fails after `timeoutMs`. */
