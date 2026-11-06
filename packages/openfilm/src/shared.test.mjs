@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -175,7 +175,32 @@ test('a sound used by many clips is one input, split and cut in the graph: the s
     await mix(shared, 3, one, ['-c:a', 'pcm_s16le']);
     /* the same parts, each from a file of its own: each its own input, seeking to its part */
     await mix([clip(tone, parts[0]), clip(join(dir, 'copy.wav'), parts[1]), clip(join(dir, 'tone-3.wav'), parts[2])].map((c, i) => (i === 2 ? { ...c, file: (copyFileSync(tone, join(dir, 'tone-3.wav')), join(dir, 'tone-3.wav')) } : c)), 3, each, ['-c:a', 'pcm_s16le']);
+    // If a runner ever produces a short mix, identify which graph ended early
+    // before sampling its tail. Preserve the real outputs for diagnosis below.
+    for (const file of [one, each]) {
+      const probe = spawnSync('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', file], { encoding: 'utf8' });
+      assert.equal(probe.status, 0, `${file}: ${probe.stderr}`);
+      writeFileSync(`${file}.probe.json`, probe.stdout);
+      const audio = JSON.parse(probe.stdout).streams.find((stream) => stream.codec_type === 'audio');
+      assert.ok(audio, `${file}: missing audio`);
+      assert.equal(audio.codec_name, 'pcm_s16le', file);
+      assert.equal(audio.channels, 2, file);
+      assert.equal(Number(audio.sample_rate), 48000, file);
+      const [numerator, denominator] = audio.time_base.split('/').map(Number);
+      assert.equal(Math.round(audio.duration_ts * numerator / denominator * 48000), 144000, `${file}: mix must cover all 3 seconds`);
+    }
     for (const t of [0.2, 0.5, 1.25, 1.7, 2.05, 2.25, 2.6]) assert.ok(Math.abs(levelAt(one, t) - levelAt(each, t)) < 0.01, `the same sound at ${t} s`);
+  } catch (error) {
+    if (process.env.OPENFILM_TEST_ARTIFACTS) {
+      const evidence = join(process.env.OPENFILM_TEST_ARTIFACTS, `mix-shared-${process.pid}`);
+      mkdirSync(evidence, { recursive: true });
+      for (const name of ['tone.wav', 'one.wav', 'each.wav', 'one.wav.probe.json', 'each.wav.probe.json']) {
+        if (existsSync(join(dir, name))) copyFileSync(join(dir, name), join(evidence, name));
+      }
+      writeFileSync(join(evidence, 'ffmpeg-version.txt'), spawnSync('ffmpeg', ['-version'], { encoding: 'utf8' }).stdout ?? '');
+      writeFileSync(join(evidence, 'failure.txt'), String(error?.stack ?? error));
+    }
+    throw error;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

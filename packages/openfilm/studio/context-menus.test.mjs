@@ -54,8 +54,11 @@ test('a click only selects; a right click gives the whole menu, Reference first,
     };
 
     /* a clip on the timeline: Reference, a line, then the rest, with what its bar had (Duplicate, Speed, Mute) */
-    const video = page.locator('[data-block-id]').nth(1);
+    const video = page.locator('[data-block-id][data-block-kind="video"]');
     await video.waitFor({ state: 'visible' });
+    // The timeline is usable before its asynchronous media probe reports sound.
+    // Wait for that fact before asserting the audio actions in the opened menu.
+    await video.locator('[data-audio-band="on"]').waitFor({ state: 'visible' });
     await video.click({ position: { x: 20, y: 10 } });
     await video.click({ button: 'right', position: { x: 20, y: 10 } });
     await until(async () => (await menu())?.length, 'the clip menu opens');
