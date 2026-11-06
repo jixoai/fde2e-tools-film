@@ -9,7 +9,15 @@ import { clipPixelSource } from './clip-source.ts';
 export async function renderPreview(projectId:string,size:{w:number;h:number},signal:AbortSignal,host=false){
   const iframe=document.createElement('iframe');
   iframe.dataset.filmRenderSurface='';iframe.setAttribute('aria-hidden','true');iframe.tabIndex=-1;
-  iframe.style.cssText=`position:absolute;left:0;top:${host?0:10000}px;width:${size.w}px;height:${size.h}px;border:0;pointer-events:none;color-scheme:light`;
+  iframe.style.cssText=`position:absolute;left:0;top:0;width:${size.w}px;height:${size.h}px;border:0;pointer-events:none;color-scheme:light`;
+  // Keep the full-size document alive without adding its dimensions to the
+  // editor's scrollable area. display:none/visibility:hidden would break capture.
+  const container=host?null:document.createElement('div');
+  if(container){
+    container.dataset.filmRenderContainer='';container.setAttribute('aria-hidden','true');
+    container.style.cssText='position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;contain:strict;pointer-events:none';
+    container.append(iframe);
+  }
   iframe.src=`/wf/${encodeURIComponent(projectId)}/film.html?load=export-${crypto.randomUUID()}`;
   const player=new Player();let seq=0,info:FilmInfo|null=null;
   let remote:Awaited<ReturnType<typeof openPluginRender>>|undefined;
@@ -23,12 +31,18 @@ export async function renderPreview(projectId:string,size:{w:number;h:number},si
     if(m.type==='seeked'){const entry=waiting.get(Number(m.seq));if(entry){waiting.delete(Number(m.seq));clearTimeout(entry.timer);entry.resolve();}}
     if(m.type==='error'){const error=new Error(String(m.message));readyReject(error);for(const entry of waiting.values()){clearTimeout(entry.timer);entry.reject(error);}waiting.clear();}
   };
-  const close=()=>{window.removeEventListener('message',message);signal.removeEventListener('abort',abort);iframe.remove();player.close();void remote?.close().catch(()=>{});for(const entry of waiting.values()){clearTimeout(entry.timer);entry.reject(new DOMException('render closed','AbortError'));}waiting.clear();};
-  const abort=()=>{readyReject(new DOMException('render cancelled','AbortError'));close();};
-  window.addEventListener('message',message);signal.addEventListener('abort',abort,{once:true});document.body.append(iframe);
+  let cleaned=false;
+  const close=()=>{
+    if(!cleaned){cleaned=true;window.removeEventListener('message',message);signal.removeEventListener('abort',abort);(container??iframe).remove();player.close();for(const entry of waiting.values()){clearTimeout(entry.timer);entry.reject(new DOMException('render closed','AbortError'));}waiting.clear();}
+    // A renderOpen response can arrive after abort cleaned up the local source.
+    // Always close that late remote, whose close() itself is idempotent.
+    return remote?.close()??Promise.resolve();
+  };
+  const abort=()=>{readyReject(new DOMException('render cancelled','AbortError'));void close();};
+  window.addEventListener('message',message);signal.addEventListener('abort',abort,{once:true});document.body.append(container??iframe);
   const timer=setTimeout(()=>readyReject(new Error('render document did not become ready within 20s')),20_000);
-  try{signal.throwIfAborted();await ready;}catch(error){close();throw error;}finally{clearTimeout(timer);}
-  if(!host&&pluginCaptureAvailable())try{remote=await openPluginRender(projectId,size);signal.throwIfAborted();}catch(error){close();throw error;}
+  try{signal.throwIfAborted();await ready;}catch(error){await close();throw error;}finally{clearTimeout(timer);}
+  if(!host&&pluginCaptureAvailable())try{remote=await openPluginRender(projectId,size);signal.throwIfAborted();}catch(error){await close();throw error;}
   const source:PreviewPixelSource={
     size:()=>size,duration:()=>info!.duration,
     seek:async t=>{

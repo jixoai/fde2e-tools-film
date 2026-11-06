@@ -10,7 +10,7 @@ import { renderSelection, selectionFrame } from '../../../../src/render-ranges.m
 import {subtitleFile,burnCaptions} from './export-captions.ts';
 
 export interface PreviewPixelSource {
-  open?(signal:AbortSignal):Promise<{source:PreviewPixelSource;close():void}>;
+  open?(signal:AbortSignal):Promise<{source:PreviewPixelSource;close():void|Promise<void>}>;
   ready?(): boolean;
   seek(t: number): Promise<void>;
   capture(transparent?: boolean): Promise<ImageBitmap | HTMLCanvasElement>;
@@ -30,6 +30,9 @@ const completionListeners = new Set<(job: ExportJob) => void>();
 const temporaryJobs = new Set<string>();
 const aborts = new Map<string, AbortController>();
 const queued = new Map<string, Array<{ id: string; run: () => void }>>();
+// Publish terminal receipts only after the isolated source is closed and the
+// writer is handed to the next queued job. Completion listeners may re-enter.
+const terminal = new Map<string, Partial<ExportJob>>();
 let fallbackJobSequence = 0;
 
 const newJobId = (): string => {
@@ -119,12 +122,15 @@ export function startWebExport(projectId: string, request: ExportRequest, source
   const run = () => { jobs.running = id; void work(projectId, id, request, source, deps).catch((error) => {
     const current = jobs.jobs.get(id);
     if (!current || current.status === 'cancelled') return;
-    if (error?.name === 'AbortError') { cancelled(projectId, id); return; }
-    Object.assign(current, { status: 'failed', phase: null, error: error instanceof Error ? error.message : String(error), finishedAt: Date.now() });
-    jobs.running = null; tell({ ...current });
+    if (error?.name === 'AbortError') { cancelled(id); return; }
+    terminal.set(id, { status: 'failed', phase: null, error: error instanceof Error ? error.message : String(error), finishedAt: Date.now() });
   }).finally(() => {
-    if (jobs.running === id) jobs.running = null;
-    const next = queued.get(projectId)?.shift(); next?.run();
+    if (jobs.running === id) {
+      jobs.running = null;
+      const next = queued.get(projectId)?.shift(); next?.run();
+    }
+    const receipt = terminal.get(id); terminal.delete(id);
+    if (receipt) setJob(projectId, id, receipt);
   }); };
   if (jobs.running !== null) { const list = queued.get(projectId) ?? []; list.push({id,run}); queued.set(projectId,list); }
   else run();
@@ -142,15 +148,11 @@ const setJob = (projectId: string, id: string, patch: Partial<ExportJob>): Expor
   if (!job) return null;
   Object.assign(job, patch); tell({ ...job }); return job;
 };
-const cancelled = (projectId: string, id: string): void => {
-  const jobs = jobsOf(projectId);
-  setJob(projectId, id, { status: 'cancelled', phase: null, finishedAt: Date.now() });
-  jobs.running = null;
+const cancelled = (id: string): void => {
+  terminal.set(id, { status: 'cancelled', phase: null, finishedAt: Date.now() });
 };
-const done = (projectId: string, id: string, outputs: string[], bytes: number, encoder: string): void => {
-  const jobs = jobsOf(projectId);
-  setJob(projectId, id, { status: 'done', phase: null, progress: 1, outputs, bytes, encoder, finishedAt: Date.now() });
-  jobs.running = null;
+const done = (id: string, outputs: string[], bytes: number, encoder: string): void => {
+  terminal.set(id, { status: 'done', phase: null, progress: 1, outputs, bytes, encoder, finishedAt: Date.now() });
 };
 
 async function freePath(projectId: string, path: string, deps: WebExportDeps): Promise<string> {
@@ -192,11 +194,11 @@ async function work(projectId: string, id: string, request: ExportRequest, sourc
       const { buildPackage, zipEntries } = await import('./interchange.ts');
       const pack = await buildPackage(projectId); abort.signal.throwIfAborted();
       const blob = new Blob([zipEntries(pack.entries)],{type:'application/zip'});
-      done(projectId,id,[await putOutput(projectId,request.name??pack.name,'zip',blob,deps)],blob.size,'project/ZIP');return;
+      done(id,[await putOutput(projectId,request.name??pack.name,'zip',blob,deps)],blob.size,'project/ZIP');return;
     }
     if (request.kind === 'subtitles') {
       const blob=await subtitleFile(projectId,request.format,request.ranges??[request.range??[0,source.duration()]]);
-      done(projectId,id,[await putOutput(projectId,request.name??'Subtitles',request.format,blob,deps)],blob.size,'subtitles/text');return;
+      done(id,[await putOutput(projectId,request.name??'Subtitles',request.format,blob,deps)],blob.size,'subtitles/text');return;
     }
     if (request.kind === 'video' || request.kind === 'gif') {
       const fps = request.fps;
@@ -222,7 +224,7 @@ async function work(projectId: string, id: string, request: ExportRequest, sourc
           setJob(projectId,id,{framesDone:index+1,progress:(index+1)/frameCount});
         }
         const blob=await zip.finish();
-        done(projectId,id,[await putOutput(projectId,request.name??id,'zip',blob,deps)],blob.size,'PNG/ZIP');return;
+        done(id,[await putOutput(projectId,request.name??id,'zip',blob,deps)],blob.size,'PNG/ZIP');return;
         } finally {await zip.cleanup();}
       }
       const format = request.kind === 'gif' ? 'gif' : request.codec as import('./wasm-encode-session.ts').WasmFormat;
@@ -249,13 +251,13 @@ async function work(projectId: string, id: string, request: ExportRequest, sourc
       try {
         const started = Date.now();
         for (let index = 0; index < frameCount; index += 1) {
-          if (abort.signal.aborted) { cancelled(projectId, id); return; }
+          if (abort.signal.aborted) { cancelled(id); return; }
           const at = (selectionFrame(selection.spans, index) + 0.5) / fps;
           await source.seek(at);
-          if (abort.signal.aborted) { cancelled(projectId, id); return; }
+          if (abort.signal.aborted) { cancelled(id); return; }
           const alpha = request.kind === 'video' && (request.codec === 'prores4444' || request.codec === 'vp9');
           const captured = await source.capture(alpha);
-          if (abort.signal.aborted) { cancelled(projectId, id); return; }
+          if (abort.signal.aborted) { cancelled(id); return; }
           const canvas=outputCanvas(captured, stage, out, frame, fill, alpha);
           if(request.burnSubtitles)await burnCaptions(canvas,projectId,source.captionTime?.(at)??at);
           await encoder.add(canvas);
@@ -267,11 +269,11 @@ async function work(projectId: string, id: string, request: ExportRequest, sourc
         const name = request.name ?? id;
         const intermediate = await encoder.finalize();
         encoderSettled = true;
-        if (abort.signal.aborted) { cancelled(projectId, id); return; }
+        if (abort.signal.aborted) { cancelled(id); return; }
         const path = await putOutput(projectId, name, intermediate.extension, intermediate.blob, deps);
         const outputs=[path];let bytes=intermediate.blob.size;
         if(request.kind==='video'&&request.sidecar){const captions=ranges.map(([a,b])=>[source.captionTime?.(a)??a,source.captionTime?.(b)??b]);const blob=await subtitleFile(projectId,request.sidecar,captions);outputs.push(await putOutput(projectId,name,request.sidecar,blob,deps));bytes+=blob.size;}
-        done(projectId, id, outputs, bytes, intermediate.codec); return;
+        done(id, outputs, bytes, intermediate.codec); return;
       } finally {
         if (!encoderSettled) await encoder.cancel().catch(() => {});
       }
@@ -302,7 +304,7 @@ async function work(projectId: string, id: string, request: ExportRequest, sourc
           outputs.push(await putOutput(projectId, track.name, result.extension, result.blob, deps)); bytes += result.blob.size;
         } finally { await encoder.cancel(); }
       }
-      done(projectId, id, outputs, bytes, `${request.format}/ST`); return;
+      done(id, outputs, bytes, `${request.format}/ST`); return;
     }
     if (request.kind === 'stills' || request.kind === 'poster') {
       const times = request.kind === 'poster' ? [request.at ?? 0] : (request.at ?? [0]);
@@ -310,11 +312,11 @@ async function work(projectId: string, id: string, request: ExportRequest, sourc
       const out = exportFramedDims(stage, frame, fill, request.shortEdge ?? Math.min(stage.w, stage.h));
       const outputs: string[] = []; let bytes = 0;
       for (const [index, at] of times.entries()) {
-        if (abort.signal.aborted) { cancelled(projectId, id); return; }
+        if (abort.signal.aborted) { cancelled(id); return; }
         await source.seek(at);
-        if (abort.signal.aborted) { cancelled(projectId, id); return; }
+        if (abort.signal.aborted) { cancelled(id); return; }
         const captured = await source.capture();
-        if (abort.signal.aborted) { cancelled(projectId, id); return; }
+        if (abort.signal.aborted) { cancelled(id); return; }
         const canvas = outputCanvas(captured, stage, out, frame, fill);
         if(request.burnSubtitles)await burnCaptions(canvas,projectId,at);
         const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, format === 'jpg' ? 'image/jpeg' : 'image/png', 0.92));
@@ -327,12 +329,17 @@ async function work(projectId: string, id: string, request: ExportRequest, sourc
         const {zipEntries}=await import('./interchange.ts');const entries=[];
         for(const path of outputs){const data=await deps.readFile?.(projectId,path);if(!data)throw new Error('image bytes are missing');entries.push({path:path.split('/').at(-1)!,bytes:data});}
         const blob=new Blob([zipEntries(entries)],{type:'application/zip'});
-        done(projectId,id,[await putOutput(projectId,request.name??id,'zip',blob,deps)],blob.size,'PNG/ZIP');return;
+        done(id,[await putOutput(projectId,request.name??id,'zip',blob,deps)],blob.size,'PNG/ZIP');return;
       }
-      done(projectId, id, outputs, bytes, format.toUpperCase()); return;
+      done(id, outputs, bytes, format.toUpperCase()); return;
     }
     throw new Error(`unsupported web export kind: ${request.kind}`);
-  } finally {isolated?.close();aborts.delete(id); }
+  } catch (error) {
+    // Closing a render window can reject an in-flight capture with a CDP error
+    // rather than AbortError. The job's own signal is the cancellation authority.
+    if (abort.signal.aborted) { cancelled(id); return; }
+    throw error;
+  } finally {try{await isolated?.close();}finally{aborts.delete(id);} }
 }
 
 export async function waitForWebExport(projectId: string, jobId: string, signal?: AbortSignal): Promise<ExportJob> {

@@ -70,3 +70,55 @@ test('a waiter whose signal is already aborted cancels instead of hanging', asyn
   const terminal = await waitForWebExport(id, job.id);
   assert.equal(terminal.status, 'cancelled');
 });
+
+test('closing a cancelled render during capture preserves cancellation and releases the writer', async () => {
+  const id = `capture-abort-${Date.now()}`;
+  let captureStarted!: () => void;
+  const started = new Promise<void>((resolve) => { captureStarted = resolve; });
+  let closed = 0;
+  const isolated = {
+    ...source(),
+    open: async (signal: AbortSignal) => ({
+      source: { ...source(), capture: () => new Promise<HTMLCanvasElement>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('Frame with ID 0 was removed.')), { once: true });
+        captureStarted();
+      }) },
+      close: () => { closed += 1; },
+    }),
+  };
+  const request = { kind: 'poster', format: 'png', shortEdge: 320, at: 0 } as const;
+  const job = startWebExport(id, request, isolated, deps);
+  await started;
+  cancelWebExport(id, job.id);
+  const terminal = await waitForWebExport(id, job.id);
+  assert.equal(terminal.status, 'cancelled');
+  assert.equal(terminal.error, undefined);
+  assert.equal(closed, 1);
+  // An identical renderer error without cancellation must still be a failure.
+  const retry = startWebExport(id, request, { ...source(), capture: async () => { throw new Error('Frame with ID 0 was removed.'); } }, deps);
+  const failed = await waitForWebExport(id, retry.id);
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.error, 'Frame with ID 0 was removed.');
+});
+
+test('cancel completion hands the writer to the queued job before an immediate retry', async () => {
+  const id = `queued-abort-${Date.now()}`;
+  const entered: string[] = [];
+  const release = new Map<string, () => void>();
+  const slow = (name: string) => ({ ...source(), seek: () => new Promise<void>((resolve) => {
+    entered.push(name); release.set(name, resolve);
+  }) });
+  const request = { kind: 'poster', format: 'png', shortEdge: 320, at: 0 } as const;
+  const a = startWebExport(id, request, slow('A'), deps);
+  const b = startWebExport(id, request, slow('B'), deps, true);
+  cancelWebExport(id, a.id); release.get('A')!();
+  assert.equal((await waitForWebExport(id, a.id)).status, 'cancelled');
+  assert.throws(() => startWebExport(id, request, slow('C'), deps), (e: unknown) => (e as {code: string}).code === 'E_EXPORT_BUSY');
+  assert.deepEqual(entered, ['A', 'B']);
+  assert.equal(listWebExports(id).filter(j => j.status === 'running').length, 1);
+  cancelWebExport(id, b.id); release.get('B')!();
+  assert.equal((await waitForWebExport(id, b.id)).status, 'cancelled');
+  const c = startWebExport(id, request, slow('C'), deps);
+  cancelWebExport(id, c.id); release.get('C')!();
+  assert.equal((await waitForWebExport(id, c.id)).status, 'cancelled');
+});

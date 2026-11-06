@@ -35,5 +35,9 @@ export async function openPluginRender(projectId:string,size:{w:number;h:number}
   await closing;
   const opened=await request('renderOpen',30_000,{projectId,width:size.w,height:size.h});
   const handle=String(opened.handle);
-  return {seek:async(t:number)=>{await request('renderSeek',30_000,{handle,t});},capture:()=>capturePluginFrame(handle),close:()=>{closing=request('renderClose',5_000,{handle}).then(()=>{},()=>{});return closing;}};
+  let closed:Promise<void>|undefined;
+  return {seek:async(t:number)=>{await request('renderSeek',30_000,{handle,t});},capture:()=>capturePluginFrame(handle),close:()=>{
+    if(!closed){closed=request('renderClose',5_000,{handle}).then(()=>{},()=>{});closing=closed;}
+    return closed;
+  }};
 }
