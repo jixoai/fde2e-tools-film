@@ -100,7 +100,7 @@ const script = (text) => `<script>${text}</script>`;
 const FILM_START = (stage) => `<style>html,body{margin:0;overflow:hidden}:where(body){background:#000}`
   + `body>section{display:contents}body>section>:is(iframe,video,img,audio){position:absolute;left:0;top:0;margin:0;visibility:hidden}`
   + `body>section>iframe{border:0;width:${stage.w}px;height:${stage.h}px}:where(body>section>:is(video,img)){object-fit:contain}</style>`
-  + `<script type="module" src="__film/timeline.mjs"></script>`;
+  + `<script type="module" src="/__film/timeline.mjs"></script>`;
 
 /* the stage as the film's <head> says it (the same meta viewport the server face reads) */
 const stageOf = (html) => {

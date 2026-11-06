@@ -118,7 +118,7 @@ function SnapshotPlayer({ snapshot }: { snapshot: VersionPreview }) {
     (info: FilmInfo) => {
       setStage({ w: info.width, h: info.height });
       setDuration(info.duration);
-      player.load(snapshot.folder, info.sounds, info.duration);
+      player.load(new URL(snapshot.folder, window.location.href).href, info.sounds, info.duration);
     },
     [player, snapshot.folder]
   );
