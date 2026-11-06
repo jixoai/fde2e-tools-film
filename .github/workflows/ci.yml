@@ -122,6 +122,9 @@ jobs:
         with:
           name: film-web-${{ github.sha }}
           path: packages/openfilm/studio/ui/dist/
+          # The checksum manifest covers every built file, including vendored
+          # hidden metadata. Preserve that exact set in the downloaded artifact.
+          include-hidden-files: true
           retention-days: 30
           if-no-files-found: error
 
