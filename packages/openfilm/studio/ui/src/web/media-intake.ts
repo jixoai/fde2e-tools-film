@@ -196,10 +196,22 @@ export function decodeMediaBase64(raw: string, declaredMime?: string): { blob: B
   const data = /^data:([^;,]+)?;base64,([\s\S]+)$/i.exec(base64);
   if (data) { mime = normalizedMime(data[1]) || mime; base64 = data[2]!; }
   base64 = base64.replace(/\s+/g, '');
-  if (!base64 || base64.length > Math.ceil(MAX_ENCODED_MEDIA_BYTES / 3) * 4 + 4
-    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64)) {
+  if (!base64 || base64.length % 4 !== 0
+    || base64.length > Math.ceil(MAX_ENCODED_MEDIA_BYTES / 3) * 4 + 4) {
     throw new MediaIntakeError('invalid-base64', 'media base64 is invalid or too large');
   }
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  // A repeated-quartet regex can exhaust the JS regexp stack on ordinary multi-MB media.
+  // Scan the alphabet once; only the final one or two characters may be padding.
+  for (let i = 0; i < base64.length - padding; i++) {
+    const code = base64.charCodeAt(i);
+    if (!((code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+      || (code >= 48 && code <= 57) || code === 43 || code === 47)) {
+      throw new MediaIntakeError('invalid-base64', 'media base64 is invalid or too large');
+    }
+  }
+  const decodedLength = base64.length / 4 * 3 - padding;
+  if (decodedLength > MAX_ENCODED_MEDIA_BYTES) throw new MediaIntakeError('too-large', `media exceeds ${MAX_ENCODED_MEDIA_BYTES} bytes`);
   let binary: string;
   try { binary = atob(base64); } catch { throw new MediaIntakeError('invalid-base64', 'media base64 is invalid'); }
   if (binary.length > MAX_ENCODED_MEDIA_BYTES) throw new MediaIntakeError('too-large', `media exceeds ${MAX_ENCODED_MEDIA_BYTES} bytes`);
