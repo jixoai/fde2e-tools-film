@@ -55,7 +55,7 @@ const screenshot = async (page, name) => {
 };
 const waitForTools = async (page) => {
   await page.waitForFunction(() => Boolean(window.__webmcp_registered_tools?.size), undefined, { timeout: 30_000, polling: 250 });
-  await page.waitForFunction(() => window.__webmcp_registered_tools?.size === 35, undefined, { timeout: 30_000, polling: 250 });
+  await page.waitForFunction(() => window.__webmcp_registered_tools?.size === 44, undefined, { timeout: 30_000, polling: 250 });
 };
 const callTool = (page, name, input = {}) => page.evaluate(async ([toolName, args_]) => {
   const tool = window.__webmcp_registered_tools?.get(toolName);
@@ -158,7 +158,7 @@ try {
   expect(cold.origin === origin, `origin=${cold.origin}`);
   expect(cold.crossOriginIsolated === false, `crossOriginIsolated=${cold.crossOriginIsolated}`);
   expect(cold.sharedArrayBuffer === 'undefined', `SharedArrayBuffer=${cold.sharedArrayBuffer}`);
-  expect(cold.tools === 35, `WebMCP tools=${cold.tools}`);
+  expect(cold.tools === 44, `WebMCP tools=${cold.tools}`);
   expect(coldFfmpeg.length === 0, `cold boot requested ${coldFfmpeg.length} ffmpeg assets`);
   const homeShot = await screenshot(page, 's1-production-home.png');
   steps.push({

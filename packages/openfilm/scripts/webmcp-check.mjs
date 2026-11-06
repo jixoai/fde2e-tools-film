@@ -8,7 +8,7 @@
  * 断言面（T10/03 §2 按本仓 4.1/4.2 已落地部分裁剪）：
  * 1. **OT 门回归**：无 flag 启动时 document.modelContext 必须缺席（Chrome 默认不开；
  *    某天变红＝Chrome 转正，更新文档，属预期告警）。
- * 2. **原生路径**（--enable-blink-features=WebMCP）：35 工具枚举齐套；annotations
+ * 2. **原生路径**（--enable-blink-features=WebMCP）：44 工具枚举齐套；annotations
  *    逐工具对表（L0 只读必须 readOnlyHint:true；L2 必须 consequentialHint:true）；
  *    名字正则；getTools 无重名。
  * 3. **项目族全链**：create → open → edit 写入 → save_version → list_versions →
@@ -49,12 +49,13 @@ const EXPECT = {
       "edit_trim_clip", "edit_set_speed", "edit_set_volume", "edit_set_box", "edit_set_props",
       "edit_set_track", "edit_reorder_tracks", "edit_set_stage", "edit_restore_overrides",
       "edit_write_page", "edit_read_page",
+      "edit_list_deleted_versions", "edit_delete_versions", "edit_recover_versions", "edit_restore_film",
       "edit_list_versions", "edit_save_version", "edit_checkout_version", "edit_discard_changes", "edit_copy_version",
       // projects
       "projects_list", "projects_list_media", "projects_import_media", "projects_create", "projects_open", "projects_delete",
-      "projects_export_package", "projects_load_example",
+      "projects_export_package", "projects_load_example", "projects_import_package", "projects_rename", "projects_read_file", "projects_package_channel",
       // produce
-      "produce_look", "produce_render", "produce_export_status",
+      "produce_look", "produce_render", "produce_export_status", "produce_cancel_export",
     ],
   },
 };
@@ -62,11 +63,11 @@ const EXPECT = {
 /** 护栏对表（L0 只读必须 readOnlyHint:true；破坏性必须 consequentialHint:true）。 */
 const GUARDRAIL = {
   readOnly: ["film_state", "film_problems", "film_overrides", "edit_read_page", "edit_list_versions",
-    "projects_list", "projects_list_media", "projects_export_package", "produce_export_status"],
+    "projects_list", "projects_list_media", "projects_export_package", "produce_export_status", "produce_look"],
   consequential: ["edit_restore_overrides", "edit_write_page", "edit_checkout_version", "edit_discard_changes", "projects_delete"],
   mutation: ["edit_apply", "edit_move_clip", "edit_remove_clip", "edit_insert_clip", "edit_split_clip", "edit_trim_clip",
     "edit_set_speed", "edit_set_volume", "edit_set_box", "edit_set_props", "edit_set_track", "edit_reorder_tracks",
-    "edit_set_stage", "edit_save_version", "edit_copy_version", "projects_create", "projects_open", "projects_load_example", "projects_import_media", "produce_look", "produce_render"],
+    "edit_set_stage", "edit_save_version", "edit_copy_version", "projects_create", "projects_open", "projects_load_example", "projects_import_media", "produce_render"],
 };
 
 const NAME_RE = /^[a-zA-Z0-9_.-]{1,128}$/;
@@ -233,6 +234,9 @@ async function assertFullChain(browser) {
     if (!rejectedUrl.error || rejectedUrl.code !== "url-host") throw new Error(`URL allowlist did not close: ${JSON.stringify(rejectedUrl)}`);
 
     // ── edit 链 ──
+    const gatePage = '<!doctype html><html><body style="margin:0;background:gold"><script>window.film={width:320,height:180,duration:2,frame(){}}<\/script></body></html>';
+    const writtenGate = await call(page, 'edit_write_page', {path:'assets/gate.html',text:gatePage});
+    if (!writtenGate.rev) throw new Error(`gate page fixture: ${JSON.stringify(writtenGate)}`);
     const ins = await call(page, "edit_insert_clip", { src: "assets/gate.html", at: 0, time: [0, 2] });
     if (!ins.ok) throw new Error(`edit_insert_clip: ${JSON.stringify(ins)}`);
     const state1 = await call(page, "film_state", {});
@@ -280,12 +284,12 @@ async function assertFullChain(browser) {
 
     // ── produce 全链在真实预览 E2E 单独跑；这里守 schema/负面边界与状态面 ──
     const lookBad = await call(page, "produce_look", { at: -1 });
-    if (!lookBad.error || !/0 or more/.test(lookBad.error)) throw new Error(`produce_look 非法秒未拒绝: ${JSON.stringify(lookBad)}`);
+    if (!lookBad.error || !/moments|range|duration/.test(lookBad.error)) throw new Error(`produce_look 非法秒未拒绝: ${JSON.stringify(lookBad)}`);
     const renderBad = await call(page, "produce_render", { kind: "video", from: 3, to: 1 });
     if (!renderBad.error || !/duration|range/.test(renderBad.error)) throw new Error(`produce_render 非法范围未拒绝: ${JSON.stringify(renderBad)}`);
     const lookFrameBad = await call(page, "produce_look", { frame: "not-a-ratio" });
     if (!lookFrameBad.error || !/frame/.test(lookFrameBad.error)) throw new Error(`produce_look 非法画幅未拒绝: ${JSON.stringify(lookFrameBad)}`);
-    const renderKindBad = await call(page, "produce_render", { kind: "audio" });
+    const renderKindBad = await call(page, "produce_render", { kind: "unknown" });
     if (!renderKindBad.error || !/kind/.test(renderKindBad.error)) throw new Error(`produce_render 非法类型未拒绝: ${JSON.stringify(renderKindBad)}`);
     const renderFillBad = await call(page, "produce_render", { fill: "stretch" });
     if (!renderFillBad.error || !/fill/.test(renderFillBad.error)) throw new Error(`produce_render 非法适配未拒绝: ${JSON.stringify(renderFillBad)}`);
@@ -433,7 +437,7 @@ async function main() {
     console.log(`${r.ok ? "✓" : "✗"} ${r.name}${r.ok ? "" : " → " + r.extra}`);
   }
   if (failed) process.exit(1);
-  console.log("全绿：35 工具枚举齐＋护栏对表＋OT 门＋项目/edit 全链（含负面与非法矩阵）＋包真下载魔数＋OPFS 持久化＋polyfill 冒烟");
+  console.log("全绿：44 工具枚举齐＋护栏对表＋OT 门＋项目/edit 全链（含负面与非法矩阵）＋包真下载魔数＋OPFS 持久化＋polyfill 冒烟");
 }
 
 main();

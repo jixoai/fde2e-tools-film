@@ -12,11 +12,15 @@
  * writer here is ~80 lines and the reader needs inflate only for foreign zips, via the browser's
  * own DecompressionStream('deflate-raw'). Chromium only, like the rest of the web face.
  */
-import { createProjectFromFiles, getProject, listFiles, readFilm, readFileBytes, filmRev } from './opfs/index.ts';
+import { withProjectLock } from './opfs/project-lock.ts';
+import { safeProjectPath } from './opfs/store.ts';
+import { createProjectFromFiles, getProject, listFiles, readFileBytes } from './opfs/index.ts';
 
 export const MANIFEST = 'manifest.film.json';
 export const PACKAGE_KIND = 'fde2e-film-project';
 export const PACKAGE_FORMAT = 1;
+export const MAX_PACKAGE_BYTES = 256 * 1024 * 1024;
+export const MAX_PACKAGE_FILES = 4096;
 
 export interface PackageFile { path: string; size: number; sha256: string }
 export interface PackageManifest {
@@ -41,19 +45,19 @@ const sha256 = async (data: ArrayBuffer): Promise<string> => {
 /** The project as package entries: manifest.film.json + film.html + every project file.
     `.film/` (state, versions) stays out — the package is the working copy, not the archive. */
 export async function buildPackage(id: string): Promise<{ name: string; entries: PackageEntry[]; manifest: PackageManifest }> {
+  return withProjectLock(id, async () => {
   const project = await getProject(id);
   if (!project) throw new Error('the project is gone');
-  const film = await readFilm(id);
-  if (!film) throw new Error('the project has no film');
   const filmBytes = await readFileBytes(id, 'film.html');
   if (!filmBytes) throw new Error('the project has no film');
 
   const files: PackageFile[] = [{ path: 'film.html', size: filmBytes.byteLength, sha256: await sha256(filmBytes) }];
   const entries: PackageEntry[] = [{ path: 'film.html', bytes: filmBytes }];
-  for (const f of (await listFiles(id)).files) {
+  const listing = await listFiles(id);
+  for (const f of [...listing.files, ...listing.pages].sort((a, b) => a.path.localeCompare(b.path))) {
     if (f.path === 'film.html') continue;
     const bytes = await readFileBytes(id, f.path);
-    if (bytes === null) continue;
+    if (bytes === null) throw new Error(`project file disappeared: ${f.path}`);
     files.push({ path: f.path, size: bytes.byteLength, sha256: await sha256(bytes) });
     entries.push({ path: f.path, bytes });
   }
@@ -63,11 +67,13 @@ export async function buildPackage(id: string): Promise<{ name: string; entries:
     name: project.name,
     projectId: id,
     savedAt: Date.now(),
-    filmRev: await filmRev(film.text),
+    filmRev: files[0].sha256.slice(0, 16),
     files,
   };
   entries.push({ path: MANIFEST, bytes: new TextEncoder().encode(JSON.stringify(manifest, null, 1) + '\n').buffer as ArrayBuffer });
+  await verifyPackage(entries);
   return { name: project.name, entries, manifest };
+  });
 }
 
 /* ── the zip writer: stored entries, zip64 when a size needs it ────────── */
@@ -81,8 +87,8 @@ const crcTable = (() => {
   }
   return t;
 })();
-const crc32 = (data: Uint8Array): number => {
-  let c = 0xffffffff;
+export const crc32 = (data: Uint8Array, seed = 0): number => {
+  let c = seed ^ 0xffffffff;
   for (let i = 0; i < data.length; i++) c = crcTable[(c ^ data[i]) & 0xff]! ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 };
@@ -107,6 +113,7 @@ const MAX32 = 0xffffffff;
 
 /** The entries as one stored zip (the package's own transport). */
 export function zipEntries(entries: readonly PackageEntry[]): ArrayBuffer {
+  if (entries.length > MAX_PACKAGE_FILES || entries.reduce((n, e) => n + e.bytes.byteLength + new TextEncoder().encode(e.path).length * 2 + 76, 22) > MAX_PACKAGE_BYTES) throw new Error('package exceeds transport limit');
   const { time, day } = dosStamp();
   const parts: Uint8Array[] = [];
   const central: Uint8Array[] = [];
@@ -137,12 +144,22 @@ export function zipEntries(entries: readonly PackageEntry[]): ArrayBuffer {
 
 const raw = (b: ArrayBuffer) => new DataView(b);
 const text = (b: ArrayBuffer, at: number, len: number) => new TextDecoder().decode(new Uint8Array(b, at, len));
-const INFLATE = new DecompressionStream('deflate-raw');
-const inflate = async (bytes: Uint8Array): Promise<ArrayBuffer> =>
-  new Response(new Blob([bytes as BlobPart]).stream().pipeThrough(INFLATE)).arrayBuffer();
+async function inflate(bytes: Uint8Array, limit: number): Promise<ArrayBuffer> {
+  const reader = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+  const chunks: Uint8Array[] = []; let size = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      size += value.byteLength; if (size > limit) throw new Error('package exceeds declared size');
+      chunks.push(value);
+    }
+  } finally { await reader.cancel().catch(() => {}); }
+  return new Blob(chunks as BlobPart[]).arrayBuffer();
+}
 
 /** The zip's entries (files only), stored or deflated. Throws when it is not a zip. */
 export async function unzipEntries(zip: ArrayBuffer): Promise<PackageEntry[]> {
+  if (zip.byteLength > MAX_PACKAGE_BYTES) throw new Error('package is too large');
   const v = raw(zip);
   if (zip.byteLength < 22 || v.getUint32(0, true) !== 0x04034b50) throw new Error('not a zip file');
   // find the end-of-central-directory record (comment can trail it)
@@ -152,12 +169,16 @@ export async function unzipEntries(zip: ArrayBuffer): Promise<PackageEntry[]> {
   }
   if (eocd < 0) throw new Error('not a zip file');
   const count = v.getUint16(eocd + 10, true);
+  if (count > MAX_PACKAGE_FILES) throw new Error('too many package files');
+  let expanded = 0;
   let at = v.getUint32(eocd + 16, true);
   const out: PackageEntry[] = [];
   for (let i = 0; i < count; i++) {
     if (v.getUint32(at, true) !== 0x02014b50) throw new Error('not a zip file');
     const method = v.getUint16(at + 10, true);
+    const compressedSize = v.getUint32(at + 20, true);
     const size = v.getUint32(at + 24, true);
+    expanded += size; if (expanded > MAX_PACKAGE_BYTES) throw new Error('package expands beyond limit');
     const nameLen = v.getUint16(at + 28, true);
     const extraLen = v.getUint16(at + 30, true);
     const commentLen = v.getUint16(at + 32, true);
@@ -167,10 +188,12 @@ export async function unzipEntries(zip: ArrayBuffer): Promise<PackageEntry[]> {
     const localExtraLen = v.getUint16(local + 28, true);
     const dataAt = local + 30 + localNameLen + localExtraLen;
     if (!name.endsWith('/')) {
-      const stored = new Uint8Array(zip, dataAt, size);
+      if (dataAt + compressedSize > zip.byteLength) throw new Error('truncated zip entry');
+      const stored = new Uint8Array(zip, dataAt, compressedSize);
       const bytes = method === 0 ? stored.slice().buffer
-        : method === 8 ? await inflate(stored)
+        : method === 8 ? await inflate(stored, size)
         : (() => { throw new Error(`unsupported zip method ${method}`); })();
+      if (bytes.byteLength !== size) throw new Error('zip size mismatch');
       out.push({ path: name, bytes });
     }
     at += 46 + nameLen + extraLen + commentLen;
@@ -183,27 +206,43 @@ export async function unzipEntries(zip: ArrayBuffer): Promise<PackageEntry[]> {
 /** The package checked: a manifest of ours, and every indexed file present with its exact
     checksum. Answers the manifest. Anything missing or a byte off refuses (no partial project). */
 export async function verifyPackage(entries: readonly PackageEntry[]): Promise<PackageManifest> {
-  const manifestEntry = entries.find((e) => e.path === MANIFEST);
-  if (!manifestEntry) throw new Error(`no ${MANIFEST} in the package`);
+  if (!Array.isArray(entries) || entries.length > MAX_PACKAGE_FILES) throw new Error('invalid package entries');
+  const byPath = new Map<string, PackageEntry>(); let total = 0;
+  for (const entry of entries) {
+    if (!entry || typeof entry.path !== 'string' || !safeProjectPath(entry.path) || byPath.has(entry.path)
+      || !(entry.bytes instanceof ArrayBuffer)) throw new Error('invalid or duplicate package path');
+    total += entry.bytes.byteLength;
+    if (total > MAX_PACKAGE_BYTES) throw new Error('package is too large');
+    byPath.set(entry.path, entry);
+  }
+  const manifestEntry = byPath.get(MANIFEST);
+  if (!manifestEntry || manifestEntry.bytes.byteLength > 2 * 1024 * 1024) throw new Error(`missing or oversized ${MANIFEST}`);
   const manifest = JSON.parse(new TextDecoder().decode(manifestEntry.bytes)) as PackageManifest;
-  if (manifest.kind !== PACKAGE_KIND || manifest.format !== PACKAGE_FORMAT) throw new Error('not a fde2e film package');
-  if (!Array.isArray(manifest.files) || !manifest.files.some((f) => f.path === 'film.html')) throw new Error('the package has no film');
+  if (!manifest || manifest.kind !== PACKAGE_KIND || manifest.format !== PACKAGE_FORMAT || typeof manifest.name !== 'string') throw new Error('not a fde2e film package');
+  if (!Array.isArray(manifest.files) || !manifest.files.some((f) => f.path === 'film.html') || manifest.files.length + 1 !== entries.length) throw new Error('package file index mismatch');
+  const seen = new Set<string>();
   for (const f of manifest.files) {
-    const e = entries.find((x) => x.path === f.path);
+    if (!f || typeof f.path !== 'string' || f.path === MANIFEST || seen.has(f.path) || !safeProjectPath(f.path)
+      || !Number.isSafeInteger(f.size) || f.size < 0 || !/^[a-f0-9]{64}$/.test(f.sha256)) throw new Error('invalid package file index');
+    seen.add(f.path);
+    const e = byPath.get(f.path);
     if (!e) throw new Error(`the package is missing ${f.path}`);
     if (e.bytes.byteLength !== f.size || (await sha256(e.bytes)) !== f.sha256) throw new Error(`${f.path}: does not match its checksum`);
   }
+  if (manifest.filmRev !== manifest.files.find((f) => f.path === 'film.html')!.sha256.slice(0, 16)) throw new Error('film revision mismatch');
   return manifest;
 }
 
 /** A verified package in: a new project (its name from the manifest, or the one given — a copy
     names itself), every file put. Answers it. */
-export async function importPackage(entries: readonly PackageEntry[], name?: string): Promise<{ id: string; name: string }> {
+export async function importPackage(entries: readonly PackageEntry[], name?: string, options: { signal?: AbortSignal } = {}): Promise<{ id: string; name: string }> {
+  options.signal?.throwIfAborted();
   const manifest = await verifyPackage(entries);
+  options.signal?.throwIfAborted();
   const project = await createProjectFromFiles((name ?? '').trim() || manifest.name, manifest.files.map((file) => {
     const entry = entries.find((candidate) => candidate.path === file.path)!;
     return { path: file.path, data: entry.bytes };
-  }));
+  }), options);
   return { id: project.id, name: project.name };
 }
 

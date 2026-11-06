@@ -1,3 +1,4 @@
+import { pluginCaptureAvailable } from './plugin-capture.ts';
 /**
  * The capture lanes (design D5, T14's 终稿; spec web-film-capture): pixel capture is a REGISTRY of
  * lanes, each with its own device capability, and a clip type is supported where a lane says so.
@@ -34,19 +35,12 @@ export interface CaptureLane {
   probe: () => boolean;
 }
 
-/** The bridge seam (BU side's 4.4 will set it): anything callable the lane can drive. */
-declare global {
-  interface Window {
-    fde2eFilmBridge?: { captureScreenshot?: unknown } | undefined;
-  }
-}
-
 const LANES: readonly CaptureLane[] = [
   {
     id: 'plugin-cdp',
     label: 'Browser bridge (CDP)',
     supports: ['page', 'still', 'video'],
-    probe: () => typeof window !== 'undefined' && typeof window.fde2eFilmBridge?.captureScreenshot === 'function',
+    probe: () => pluginCaptureAvailable(),
   },
   {
     id: 'in-page',

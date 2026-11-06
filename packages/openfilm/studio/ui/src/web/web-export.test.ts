@@ -13,9 +13,9 @@ const deps = { putFile: async () => {}, readFile: async () => null };
 
 test('web export capability matrix is honest', () => {
   assert.equal(webExportSupports({ kind: 'video', codec: 'h264', fps: 30, quality: 'high', audio: false }), true);
-  assert.equal(webExportSupports({ kind: 'video', codec: 'prores422hq', fps: 30, quality: 'high', audio: false }), false);
+  assert.equal(webExportSupports({ kind: 'video', codec: 'prores422hq', fps: 30, quality: 'high', audio: false }), true);
   assert.equal(webExportSupports({ kind: 'gif', width: 320, fps: 10 }), true);
-  assert.equal(webExportSupports({ kind: 'audio', format: 'wav', mix: true, stems: false }), false);
+  assert.equal(webExportSupports({ kind: 'audio', format: 'wav', mix: true, stems: false }), true);
   assert.equal(webExportCapabilities().mp3, false);
 });
 

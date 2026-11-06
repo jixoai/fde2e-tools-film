@@ -174,10 +174,9 @@ const subtitlesApi = (projectId: string, rest: string) => `/api/projects/${encod
 
 /* the web face: captions are worked out of the film by the server; a web project has none until
    the browser-side caption batch (tracked in tasks). Style is a per-project setting beside the film. */
-const EMPTY_CAPTIONS = (): FilmCaptions => ({ cues: [], sourceLanguage: null, languages: [], untranscribed: [] });
 
 export async function fetchFilmCaptions(projectId: string, signal?: AbortSignal): Promise<FilmCaptions> {
-  if (isWeb()) return EMPTY_CAPTIONS();
+  if (isWeb()) return (await import('../web/captions.ts')).projectCaptions(projectId);
   const res = await fetch(subtitlesApi(projectId, 'captions'), { signal });
   if (!res.ok) throw new Error(`Studio answered ${res.status}`);
   return await res.json() as FilmCaptions;
@@ -211,6 +210,7 @@ export type SubtitleTranscribeResult = { ok: boolean; error?: string; needsTrans
 
 /** Transcribe the speech heard in the film that has no transcript yet (each gets a WebVTT beside it). */
 export async function requestSubtitleTranscription(projectId: string): Promise<SubtitleTranscribeResult> {
+  if (isWeb()) return {ok:false,error:'Import an existing VTT transcript beside the media file; this static editor does not call transcription providers.'};
   try {
     const res = await fetch(subtitlesApi(projectId, 'subtitles/transcribe'), { method: 'POST' });
     const body = await res.json().catch(() => null) as { failed?: { error: string }[]; error?: string; code?: string } | null;
@@ -226,6 +226,9 @@ export async function requestSubtitleTranscription(projectId: string): Promise<S
  * `language`); with `part` (a cue's), into that subtitle's words of the spoken line only.
  */
 export async function saveSubtitleLine(projectId: string, change: { src: string; line: number; part?: number; text: string; language?: string }): Promise<boolean> {
+  if (isWeb()) {
+    return (await import('../web/captions.ts')).saveCaptionLine(projectId,change);
+  }
   const res = await fetch(subtitlesApi(projectId, 'captions/line'), {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(change),
   }).catch(() => null);
@@ -234,6 +237,7 @@ export async function saveSubtitleLine(projectId: string, change: { src: string;
 
 /** Translate the film's voices into `language` (the lines then carry it; the style shows it). */
 export async function requestSubtitleTranslation(projectId: string, language: string): Promise<SubtitleTranslateResult> {
+  if (isWeb()) return {ok:false,error:'Import the translated VTT beside the source transcript; this static editor does not call translation providers.'};
   try {
     const res = await fetch(subtitlesApi(projectId, 'subtitles/translate'), {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ language }),
@@ -261,11 +265,13 @@ async function answer<T>(res: Response | null): Promise<T> {
 }
 
 export async function fetchSourceSubtitles(projectId: string, src: string): Promise<SourceSubtitles> {
+  if (isWeb()) return (await import('../web/captions.ts')).sourceCaptions(projectId,src);
   return answer(await fetch(subtitlesApi(projectId, `captions/source?src=${encodeURIComponent(src)}`)).catch(() => null));
 }
 
 /** Write a source's subtitles; the files before and after, for undo and redo. */
 export async function saveSourceSubtitles(projectId: string, src: string, cues: SourceCue[]): Promise<{ before: SubtitleSnapshot; after: SubtitleSnapshot }> {
+  if (isWeb()) return (await import('../web/captions.ts')).saveSourceCaptions(projectId,src,cues);
   return answer(await fetch(subtitlesApi(projectId, 'captions/source'), {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ src, cues }),
   }).catch(() => null));
@@ -273,6 +279,10 @@ export async function saveSourceSubtitles(projectId: string, src: string, cues: 
 
 /** Put a source's transcript files back as `to`, if they are still as `from` left them. `undo`: an edit undone. */
 export async function restoreSubtitleFiles(projectId: string, src: string, from: SubtitleSnapshot, to: SubtitleSnapshot, undo = false): Promise<void> {
+  if (isWeb()) {
+    for(const [path,text] of Object.entries(to.files)) { const old=from.files[path]??null;await store.writePage(projectId,path,text,old===null?null:await store.filmRev(old)); }
+    return;
+  }
   await answer(await fetch(subtitlesApi(projectId, 'captions/files'), {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ src, from, to, ...(undo ? { undo: true } : {}) }),
   }).catch(() => null));

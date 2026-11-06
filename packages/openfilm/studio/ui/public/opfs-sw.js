@@ -81,7 +81,6 @@ self.addEventListener('activate', (event) => { event.waitUntil(self.clients.clai
    in-page editing protocol — come with the editor batches that need them; until then the preview
    draws the film and the picture-area editing waits. `__film/*` (the timeline itself) is served
    from the static build (public/__film/, emitted by studio/ui/scripts/emit-film-runtime.mjs). */
-const HOST_FLAG = `window.filmHost={version:'0.1',name:'film'};`;
 const PAGE_SCALE = `(()=>{try{if(parent===window)return;const k=Number(new URL(parent.location.href).searchParams.get('film-dpr'));if(k>0)Object.defineProperty(window,'devicePixelRatio',{configurable:true,get:()=>k})}catch{}})();`;
 const editorScripts = async (origin, withStage) => {
   /* Do not retain these across navigations: an already-active worker must pick up a newly deployed
@@ -90,8 +89,9 @@ const editorScripts = async (origin, withStage) => {
     if (!response.ok) throw new Error(`missing Film runtime ${name}`);
     return response.text();
   });
-  const [bridge, stage] = await Promise.all([read('bridge.js'), ...(withStage ? [read('stage.js')] : [])]);
+  const [host, bridge, stage] = await Promise.all([read('host-flag.js'), read('bridge.js'), ...(withStage ? [read('stage.js')] : [])]);
   return {
+    host,
     bridge: bridge.replaceAll('__EDITOR__', JSON.stringify(origin)),
     stage: stage?.replaceAll('__EDITOR__', JSON.stringify(origin)) ?? '',
   };
@@ -143,8 +143,8 @@ self.addEventListener('fetch', (event) => {
       const html = new TextDecoder().decode(bytes);
       const runtime = await editorScripts(url.origin, injectFilm);
       const prefix = injectFilm
-        ? script(HOST_FLAG) + script(runtime.bridge) + script(runtime.stage) + FILM_START(stageOf(html))
-        : script(HOST_FLAG + PAGE_SCALE) + script(runtime.bridge);
+        ? script(runtime.host) + script(runtime.bridge) + script(runtime.stage) + FILM_START(stageOf(html))
+        : script(runtime.host + PAGE_SCALE) + script(runtime.bridge);
       const injected = injectFirst(html, prefix);
       const body = new TextEncoder().encode(injected).buffer;
       return fileResponse(event.request, body, 'text/html; charset=utf-8');

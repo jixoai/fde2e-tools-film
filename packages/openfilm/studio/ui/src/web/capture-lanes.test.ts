@@ -41,14 +41,14 @@ test('laneFor picks the first available lane that supports the kind', () => {
   assert.equal(laneFor('still')?.id, 'in-page');
 });
 
-test('with the bridge flagged in, the cdp lane answers and page clips open', () => {
+test('a legacy page-global placeholder cannot claim a working CDP lane', () => {
   (globalThis as { window?: Record<string, unknown> }).window = {
     fde2eFilmBridge: { captureScreenshot: () => {} },
   } as Record<string, unknown>;
   try {
-    assert.deepEqual(availableLanes().map((l) => l.id), ['plugin-cdp', 'in-page']);
-    assert.equal(canCapture('page'), true);
-    assert.equal(laneFor('page')?.id, 'plugin-cdp');
+    assert.deepEqual(availableLanes().map((l) => l.id), ['in-page']);
+    assert.equal(canCapture('page'), false);
+    assert.equal(laneFor('page'), null);
   } finally {
     delete (globalThis as { window?: unknown }).window;
   }

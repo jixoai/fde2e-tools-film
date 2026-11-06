@@ -333,6 +333,7 @@ export const zhCN: Words = {
       nle: '剪辑工程',
     },
     destHint: {
+      imagesWeb: "单张图片或 ZIP",
       social: '覆盖各平台的预设',
       video: '编码、尺寸与画质',
       gif: '用于文档、邮件、README',
@@ -344,6 +345,8 @@ export const zhCN: Words = {
       nle: '{app}、Final Cut Pro、Premiere Pro、DaVinci Resolve',
     },
     destDesc: {
+      projectWeb: "将影片、页面和素材打包为 ZIP，可在 FDE2E Film 中打开。",
+      imagesWeb: "选择影片中的画面，保存为单张图片或 ZIP。",
       social: '选择一个或多个平台。每个平台都会得到合适的画幅、尺寸和帧率，一次全部导出。',
       video: '从默认或社媒预设开始，也可以自由调整编码、画幅、分辨率和画质。',
       gif: '循环播放的动图。尽量短小——GIF 的体积增长很快。',
@@ -507,6 +510,7 @@ export const zhCN: Words = {
     noAudio: '此影片没有声音。',
     noFolder: '请先选择保存位置。',
     engineDown: '本地引擎没有响应。请重启 FDE2E Film 后再试。',
+    engineWeb: "在当前浏览器中渲染，根据格式使用硬件或软件编码；项目文件保留在本机。",
     engineDesktop: '在这台电脑上使用硬件编码渲染，不会上传任何内容。',
     queueing: '正在开始…',
     export: '导出',

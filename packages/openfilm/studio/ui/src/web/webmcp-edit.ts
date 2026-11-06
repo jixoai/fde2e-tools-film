@@ -21,6 +21,7 @@
  * Track indexes at the tool boundary are 1-based (the way film.html numbers its sections top-first
  * and the tool caller sees them); the conversion to ops.mjs's 0-based happens once, here.
  */
+import { historyExtraTools } from './webmcp-history.ts';
 import { currentProjectId, jsonSchema, say, type WebMCPToolDef } from './webmcp-kit.ts';
 
 type Api = typeof import('../api')['api'];
@@ -100,6 +101,7 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 
 /** The edit family's tools, appended to the four families in webmcp.ts (same defs shape). */
 export const editFamilyTools = (): WebMCPToolDef[] => [
+  ...historyExtraTools(),
   {
     name: 'edit_move_clip',
     title: 'Move a clip',
@@ -424,7 +426,7 @@ export const editFamilyTools = (): WebMCPToolDef[] => [
   {
     name: 'edit_write_page',
     title: 'Write a page of the project',
-    description: 'Write a project file whole (a page: title.html; a text side: .film/notes.md). This REPLACES the file — read it first (film_state does not show pages; the project\'s files are read with read_page below), and pass expect: the text you read, so a write that would cover someone else\'s change is refused. Destructive.',
+    description: 'Write a project file whole (a page: title.html; a text side: notes.md). This REPLACES the file — read it first (film_state does not show pages; the project\'s files are read with read_page below), and pass expect: the text you read, so a write that would cover someone else\'s change is refused. Destructive.',
     inputSchema: jsonSchema({
       path: { type: 'string', description: 'The file, project-relative ("title.html"; film.html itself is NOT written here — edit verbs shape it)' },
       text: { type: 'string', description: 'The file\'s whole new text' },
@@ -445,9 +447,10 @@ export const editFamilyTools = (): WebMCPToolDef[] => [
           if (status === 404) return null;
           throw e;
         });
-        const expectGiven = typeof expect === 'string' && expect.length > 0;
+        const expectGiven = typeof expect === 'string';
         if (was && expectGiven && was.text !== expect) return say({ error: 'the file changed since you read it (expect mismatch) — read it again' });
-        if (!was && expectGiven) return say({ error: 'expect was given but the file is not there — read the project\'s files first' });
+        if (was && !expectGiven) return say({ error: 'read the existing page and supply expect before replacing it' });
+        if (!was && expectGiven && expect !== '') return say({ error: 'expect was given but the file is not there — read the project\'s files first' });
         const rev = await apiNow.writePage(id, path, text, was ? was.rev : null);
         return say({ ok: true, path, rev });
       } catch (e) { return fail(e); }

@@ -225,12 +225,14 @@ export const api = {
         const read = readFilmFile(current.text);
         throw Object.assign(new ApiError('the film moved under this edit', 409, {}), { value: read.doc, rev: current.rev });
       }
-      const { applyOps } = await import('../../../studio/server/ops.mjs');
+      const { guardedOps } = await import('./web/guarded-ops.ts');
       const { filmHtml } = await import('../../../src/film-doc.mjs');
       const read = readFilmFile(current.text);
       if (!read.doc) throw new ApiError(read.problems.join('\n') || 'film.html cannot be read', 422, {});
-      const after = applyOps(structuredClone(read.value!), ops) as Film;
+      const after = guardedOps(read.value! as Film, ops);
       const text = filmHtml(after, current.text);
+      const valid = readFilmFile(text);
+      if (!valid.doc || valid.problems.length) throw new ApiError(valid.problems.join('\n') || 'invalid edit', 422, {});
       const rev = await store.writeFilm(id, text, current.rev);
       if (rev === null) throw Object.assign(new ApiError('the film moved under this edit', 409, {}), { value: read.doc, rev: current.rev });
       const written = readFilmFile(text);
@@ -243,11 +245,16 @@ export const api = {
     : call<Listing>(`${p(id)}/files`),
   /** the editor's settings of the project (`.film/settings.json`): its frame rate, its tracks' names */
   settings: (id: string): Promise<ProjectSettings> => (isWeb()
-    ? Promise.resolve({})
+    ? store.readFileText(id, '.film/settings.json').then((text) => text ? JSON.parse(text) as ProjectSettings : {})
     : call<{ settings: ProjectSettings }>(`${p(id)}/settings`).then((r) => r.settings)),
   /** change some of them (null takes one away); answers them all as kept */
   patchSettings: (id: string, patch: { fps?: number | null; trackNames?: ProjectSettings['trackNames'] | null; trackHeights?: ProjectSettings['trackHeights'] | null }): Promise<ProjectSettings> => (isWeb()
-    ? Promise.resolve(patch as ProjectSettings)
+    ? store.readFileText(id, '.film/settings.json').then(async (text) => {
+      const settings = text ? JSON.parse(text) as Record<string, unknown> : {};
+      for (const [key, value] of Object.entries(patch)) { if (value === null) delete settings[key]; else settings[key] = value; }
+      await store.putFile(id, '.film/settings.json', new Blob([JSON.stringify(settings)]));
+      return settings as ProjectSettings;
+    })
     : (
       call<{ settings: ProjectSettings }>(`${p(id)}/settings`, { method: 'PATCH', json: patch }).then((r) => r.settings)
     )),
@@ -322,13 +329,7 @@ export const api = {
   writePage: (id: string, path: string, text: string | null, _expect: string | null, _undo = false): Promise<string | null> => {
     if (isWeb()) {
       web();
-      return (text === null
-        ? store.deleteFile(id, path).then(() => null)
-        : store.putFile(id, path, new Blob([text])).then(async () => {
-          const read = await store.readFileText(id, path);
-          return read === null ? null : store.filmRev(read);
-        })
-      );
+      return store.writePage(id, path, text, _expect);
     }
     return (
       call<{ rev: string | null }>(`${p(id)}/page`, { method: 'PUT', json: { path, text, expect: _expect, ...(_undo ? { undo: true } : {}) } }).then((r) => r.rev)

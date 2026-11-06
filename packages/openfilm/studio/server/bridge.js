@@ -86,7 +86,7 @@
   const draw = async () => {
     if (drawing || !next) return;
     drawing = true;
-    const { t, seq, behind } = next;
+    const { t, seq, behind, strict } = next;
     next = null;
     try {
       const f = await loaded;
@@ -96,8 +96,13 @@
          video must not stop the picture. */
       const watch = editor()?.watch;
       let timer;
-      await Promise.race([watch ? watch(t) : drawn(f, t), new Promise((done) => { timer = setTimeout(done, behind ? BEHIND_WAIT_MS : FRAME_WAIT_MS); })]);
-      clearTimeout(timer);
+      try {
+        // An export needs the completed frame, including media decode and page promises.
+        // Interactive scrubbing may let a slow frame go, but that is never an export receipt.
+        await Promise.race([!strict && watch ? watch(t) : drawn(f, t), new Promise((done, reject) => {
+          timer = setTimeout(() => strict ? reject(new Error('export frame did not finish drawing')) : done(), strict || behind ? BEHIND_WAIT_MS : FRAME_WAIT_MS);
+        })]);
+      } finally { clearTimeout(timer); }
       post({ type: 'seeked', t, seq });
     } catch (e) { fail(e); }
     drawing = false;

@@ -25,7 +25,7 @@
  */
 
 import { SPEED_MAX, SPEED_MIN } from '../lib/playback-speed.ts';
-import { MEDIA_RATE_MAX, MEDIA_RATE_MIN, mediaPlays } from '../../../../src/film-doc.mjs';
+import { MEDIA_RATE_MAX, MEDIA_RATE_MIN, mediaPlays, soundRole, clipKind } from '../../../../src/film-doc.mjs';
 
 /** Sounds fetched at once; the others wait, the ones nearest to where the film is first. */
 const FETCHES = 3;
@@ -206,12 +206,12 @@ export class Player {
    * Fetches the sounds not decoded yet, or decoded from an older version; says whether there were any. A clip at another
    * speed is never decoded: a media element plays it.
    */
-  private fetchSounds(): boolean {
+  private fetchSounds(includeSped = false): boolean {
     if (!this.origin) return false;
     const ctx = this.context();
     let fetched = false;
     const t = this.time();
-    for (const s of [...this.sounds].filter((x) => x.speed === 1).sort((a, b) => awayFrom(a, t) - awayFrom(b, t))) {
+    for (const s of [...this.sounds].filter((x) => includeSped || x.speed === 1).sort((a, b) => awayFrom(a, t) - awayFrom(b, t))) {
       const version = this.versionOf(s.src);
       const had = this.buffers.get(s.src);
       /* a version not known on one side is taken as the same: the file was not seen to change */
@@ -319,27 +319,26 @@ export class Player {
    *  entirely in Web Audio and feeds Mediabunny's AAC/Opus source. Speed-adjusted sound is
    *  refused rather than pitch-shifted: the desktop ffmpeg mixer remains the truthful path for
    *  that uncommon case until a pitch-preserving Web mixer is available. */
-  async mixdown(from: number, to: number): Promise<AudioBuffer | null> {
+  async mixdown(from: number, to: number, only?: string | ReadonlySet<string> | {clip:string}, signal?: AbortSignal): Promise<AudioBuffer | null> {
     const start = Math.max(0, from);
     const end = Math.min(this.duration, to);
     if (!(end > start)) throw new Error('the audio range is empty');
-    const sounds = this.sounds.filter((sound) => sound.at < end && sound.at + lengthOf(sound) > start);
+    const sounds = this.sounds.filter((sound) => (!only || (typeof only==='string'?sound.src===only:'clip' in only?sound.clip===only.clip:only.has(sound.src))) && sound.at < end && sound.at + lengthOf(sound) > start);
     if (!sounds.length) return null;
-    if (sounds.some((sound) => Math.abs(sound.speed - 1) > 1e-6)) {
-      throw new Error('Web export cannot preserve pitch for speed-adjusted sound; use the desktop export for this film');
-    }
-    this.fetchSounds();
+    this.fetchSounds(true);
     const decoded = await Promise.all(sounds.map(async (sound) => ({ sound, buffer: await this.buffers.get(sound.src)?.buffer ?? null })));
     const available = decoded.filter((item): item is { sound: Sound; buffer: AudioBuffer } => item.buffer != null);
-    if (!available.length) return null;
+    if (available.length !== sounds.length) throw new Error('an audible source could not be decoded; the export would lose sound');
     if (typeof OfflineAudioContext === 'undefined') throw new Error('Offline Web Audio is unavailable in this browser');
-    const sampleRate = Math.max(48_000, ...available.map((item) => item.buffer.sampleRate));
+    const sampleRate = 48_000;
     const offline = new OfflineAudioContext(2, Math.max(1, Math.ceil((end - start) * sampleRate)), sampleRate);
     for (const { sound, buffer } of available) {
       const overlapStart = Math.max(start, sound.at);
       const overlapEnd = Math.min(end, sound.at + lengthOf(sound));
       if (!(overlapEnd > overlapStart)) continue;
-      const source = offline.createBufferSource(); source.buffer = buffer;
+      signal?.throwIfAborted();
+      const source = offline.createBufferSource();
+      source.buffer = Math.abs(sound.speed-1)>1e-6 ? await (await import('../web/audio-stretch.ts')).stretchAudio(buffer,sound.speed,signal) : buffer;
       const gain = offline.createGain();
       const offset = overlapStart - start;
       const local = overlapStart - sound.at;
@@ -350,10 +349,23 @@ export class Player {
         if (filmAt > overlapEnd) break;
         gain.gain.linearRampToValueAtTime(sound.volume * value, filmAt - start);
       }
+      const endGain=fadeSteps(overlapEnd-sound.at,lengthOf(sound),sound.fade)[0]![1];
+      gain.gain.linearRampToValueAtTime(sound.volume*endGain,overlapEnd-start);
       source.connect(gain).connect(offline.destination);
-      source.start(offset, fileTime(sound, overlapStart), overlapEnd - overlapStart);
+      source.start(offset, fileTime(sound, overlapStart)/sound.speed, overlapEnd - overlapStart);
     }
     return offline.startRendering();
+  }
+
+  async mixStems(from: number, to: number, signal?: AbortSignal): Promise<Array<{ name: string; buffer: AudioBuffer }>> {
+    const tracks: Array<{ name: string; buffer: AudioBuffer }> = [];
+    const groups=new Map<string,Set<string>>();
+    for(const sound of this.sounds){const role=clipKind(sound.src)==='video'?'footage':soundRole(sound.src);const paths=groups.get(role)??new Set<string>();paths.add(sound.src);groups.set(role,paths);}
+    for (const [name, paths] of groups) {
+      const buffer = await this.mixdown(from, to, paths,signal);
+      if (buffer) tracks.push({ name, buffer });
+    }
+    return tracks;
   }
 
   /** Only these clips are heard (the tracks soloed), or all (null); playing goes on from where it is. */

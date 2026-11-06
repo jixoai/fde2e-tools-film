@@ -41,13 +41,13 @@ const stageOfPage = (text: string): { w: number; h: number } => {
 
 /** Make a project from a film's text (a film lands as its film.html; a page is wrapped into one —
     its text kept as `imported.html`, the film plays it full stage). Answers the project. */
-export async function importFilmText(text: string, name?: string): Promise<StoreProject> {
+export async function importFilmText(text: string, name?: string, options: { signal?: AbortSignal } = {}): Promise<StoreProject> {
   const shape = filmShapeOf(text);
   const filmText = shape === 'page' ? filmForPage(stageOfPage(text).w, stageOfPage(text).h) : text;
   return createProjectFromFiles(name, [
     { path: 'film.html', data: filmText },
     ...(shape === 'page' ? [{ path: 'imported.html', data: text }] : []),
-  ]);
+  ], options);
 }
 
 /** A film fetched from an address (fail-open: CORS or the network refusing is the answer, said by

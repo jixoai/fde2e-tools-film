@@ -332,6 +332,7 @@ export const es: Words = {
       nle: 'Proyecto de edición',
     },
     destHint: {
+      imagesWeb: "Imágenes o ZIP",
       social: 'Ajustes preestablecidos para cada plataforma',
       video: 'Códec, tamaño y calidad',
       gif: 'Para documentos, correo, READMEs',
@@ -343,6 +344,8 @@ export const es: Words = {
       nle: '{app}, Final Cut Pro, Premiere Pro, DaVinci Resolve',
     },
     destDesc: {
+      projectWeb: "Un ZIP con la película, las páginas y los medios, listo para abrir en FDE2E Film.",
+      imagesWeb: "Elige fotogramas y guárdalos como imágenes individuales o un ZIP.",
       social: 'Elige una o más plataformas. Cada una recibe la forma, el tamaño y la velocidad de fotogramas adecuados, y se exportan de una vez.',
       video: 'Un solo video con control total sobre códec, encuadre, resolución y calidad.',
       gif: 'Una imagen animada en bucle. Mantenlo corto y pequeño: los GIF crecen rápido.',
@@ -506,6 +509,7 @@ export const es: Words = {
     noAudio: 'Esta película no tiene sonido.',
     noFolder: 'Elige primero dónde guardar.',
     engineDown: 'El motor local no responde. Reinicia FDE2E Film e inténtalo de nuevo.',
+    engineWeb: "Se renderiza en este navegador con codificación por hardware o software según el formato. El proyecto permanece en este dispositivo.",
     engineDesktop: 'Se renderiza en este equipo con codificación por hardware. No se sube nada.',
     queueing: 'Iniciando…',
     export: 'Exportar',

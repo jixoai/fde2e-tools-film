@@ -76,14 +76,13 @@ const replacementImage = (original: CaptureElement, copy: CaptureElement, src: s
   return image;
 };
 
-async function captureDocumentCanvas(document_: Document, width: number, height: number): Promise<HTMLCanvasElement> {
+async function captureDocumentCanvas(document_: Document, width: number, height: number, transparent = false): Promise<HTMLCanvasElement> {
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(width));
   canvas.height = Math.max(1, Math.round(height));
   const ctx = canvas.getContext('2d', { alpha: true });
   if (!ctx) throw new Error('2D canvas is unavailable');
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if(!transparent){ctx.fillStyle = '#000';ctx.fillRect(0, 0, canvas.width, canvas.height);}
   await drawDocument(ctx, document_, canvas.width, canvas.height);
   return canvas;
 }
@@ -120,7 +119,8 @@ async function htmlImage(document_: Document, width: number, height: number): Pr
       let child: Document | null = null;
       try { child = (original as HTMLIFrameElement).contentDocument; } catch { /* cross-origin: fail below */ }
       if (!child) throw new Error('the visible page clip is cross-origin; connect the Browser bridge CDP lane to capture it');
-      src = (await captureDocumentCanvas(child, box.width, box.height)).toDataURL('image/png');
+      // Nested layers retain alpha; only the final output chooses its background.
+      src = (await captureDocumentCanvas(child, box.width, box.height, true)).toDataURL('image/png');
     } else {
       src = canvasDataUrl(original as CanvasImageSource, box.width, box.height);
     }
@@ -182,8 +182,8 @@ async function drawDocument(ctx: CanvasRenderingContext2D, document_: Document, 
 }
 
 /** Current frame as an origin-clean stage-sized canvas. */
-export async function capturePreviewFrame(frame: HTMLIFrameElement, stage: { w: number; h: number }): Promise<HTMLCanvasElement> {
+export async function capturePreviewFrame(frame: HTMLIFrameElement, stage: { w: number; h: number }, transparent = false): Promise<HTMLCanvasElement> {
   const document_ = frame.contentDocument;
   if (!document_) throw new Error('the Film preview is not same-origin');
-  return captureDocumentCanvas(document_, stage.w, stage.h);
+  return captureDocumentCanvas(document_, stage.w, stage.h, transparent);
 }

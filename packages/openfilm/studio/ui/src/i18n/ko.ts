@@ -329,6 +329,7 @@ export const ko: Words = {
       nle: '편집 프로젝트',
     },
     destHint: {
+      imagesWeb: "이미지 또는 ZIP",
       social: '모든 플랫폼용 사전 설정',
       video: '코덱, 크기, 품질',
       gif: '문서, 이메일, README용',
@@ -340,6 +341,8 @@ export const ko: Words = {
       nle: '{app}, Final Cut Pro, Premiere Pro, DaVinci Resolve',
     },
     destDesc: {
+      projectWeb: "필름, 페이지, 미디어가 포함된 ZIP으로 FDE2E Film에서 열 수 있습니다.",
+      imagesWeb: "필름에서 프레임을 선택해 개별 이미지 또는 ZIP으로 저장합니다.",
       social: '플랫폼을 하나 이상 선택하세요. 각 플랫폼에 맞는 화면 비율, 크기, 프레임 레이트로 한 번에 내보냅니다.',
       video: '코덱, 프레임, 해상도, 품질을 모두 직접 설정하는 단일 비디오.',
       gif: '반복 재생되는 움직이는 이미지. 짧고 작게 유지하세요. GIF는 용량이 금방 커집니다.',
@@ -503,6 +506,7 @@ export const ko: Words = {
     noAudio: '이 영상에는 사운드가 없습니다.',
     noFolder: '먼저 저장 위치를 선택하세요.',
     engineDown: '로컬 엔진이 응답하지 않습니다. FDE2E Film을 다시 시작한 뒤 다시 시도하세요.',
+    engineWeb: "현재 브라우저에서 렌더링합니다. 형식에 따라 하드웨어 또는 소프트웨어로 인코딩하며 프로젝트는 이 기기에 저장됩니다.",
     engineDesktop: '이 컴퓨터에서 하드웨어 인코딩으로 렌더링합니다. 아무것도 업로드되지 않습니다.',
     queueing: '시작하는 중…',
     export: '내보내기',

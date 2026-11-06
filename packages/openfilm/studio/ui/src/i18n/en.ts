@@ -333,6 +333,7 @@ export const en = {
       nle: 'Editing project',
     },
     destHint: {
+      imagesWeb: "Images or ZIP",
       social: 'Presets for every platform',
       video: 'Codec, size and quality',
       gif: 'For docs, email, READMEs',
@@ -344,6 +345,8 @@ export const en = {
       nle: '{app}, Final Cut Pro, Premiere Pro, DaVinci Resolve',
     },
     destDesc: {
+      projectWeb: "A ZIP containing the film, pages and media, ready to open in FDE2E Film.",
+      imagesWeb: "Pick frames from the film and save them as individual images or a ZIP.",
       social: 'Pick one or more platforms. Each gets the right shape, size and frame rate, and they export in one go.',
       video: 'Start with Default or a social media preset, then adjust codec, frame, resolution and quality.',
       gif: 'A looping animated image. Keep it short and small — GIFs grow fast.',
@@ -507,6 +510,7 @@ export const en = {
     noAudio: 'This film has no sound.',
     noFolder: 'Choose where to save first.',
     engineDown: 'The local engine is not responding. Restart FDE2E Film and try again.',
+    engineWeb: "Renders in this browser. Encoding may use hardware or software; project files stay on this device.",
     engineDesktop: 'Renders on this computer with hardware encoding. Nothing is uploaded.',
     queueing: 'Starting…',
     export: 'Export',

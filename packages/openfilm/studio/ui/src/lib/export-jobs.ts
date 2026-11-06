@@ -109,8 +109,8 @@ async function call<T>(url: string, init?: RequestInit & { json?: unknown }): Pr
  */
 export function listExports(projectId: string): Promise<{ exports: ExportJob[]; folder: string; can: ExportCapabilities; drafts?: { jianying: boolean; capcut: boolean }; subtitles?: number; project?: ProjectSizes }> {
   if (isWeb()) {
-    return import('../web/web-export.ts').then(({ listWebExports, webExportCapabilities }) => ({
-      exports: listWebExports(projectId), folder: 'downloads', can: webExportCapabilities(),
+    return Promise.all([import('../web/web-export.ts'), import('../web/captions.ts')]).then(async ([{ listWebExports, webExportCapabilities }, { projectCaptions }]) => ({
+      exports: listWebExports(projectId), folder: 'downloads', can: webExportCapabilities(), subtitles: (await projectCaptions(projectId)).cues.length,
     }));
   }
   return call(endpoint(projectId), { cache: 'no-store' });

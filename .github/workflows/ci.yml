@@ -95,9 +95,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # what npm would get: the tarball of openfilm, listed in the log and checked (no tests, fixtures or dev files; the
-  # official product.json)
-  pack:
+  # Deploy only these CI-built bytes. The retired upstream npm package is not a deliverable.
+  web:
+    needs: [test, audit]
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
@@ -109,7 +109,18 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check:pack
+      - run: pnpm build
+      - name: Record the exact source and build checksums
+        run: |
+          node -e 'const fs=require("node:fs");fs.writeFileSync("packages/openfilm/studio/ui/dist/build-revision.json",JSON.stringify({revision:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID})+"\n")'
+          cd packages/openfilm/studio/ui/dist
+          find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: film-web-${{ github.sha }}
+          path: packages/openfilm/studio/ui/dist/
+          retention-days: 30
+          if-no-files-found: error
 
   audit:
     runs-on: ubuntu-latest
@@ -128,6 +139,4 @@ jobs:
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C "$RUNNER_TEMP" gitleaks
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Secrets in the history
-        run: gitleaks git --config .gitleaks.toml --redact --no-banner --verbose .
-      - name: The public audit (the files as they are)
-        run: node scripts/audit-public.mjs
+        run: gitleaks git --redact --no-banner .

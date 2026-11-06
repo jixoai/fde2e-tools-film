@@ -352,13 +352,8 @@ export function ProjectsPopover({
       const text = e.clipboardData?.getData('text/plain') ?? '';
       if (bringIn(text, 'Pasted film')) e.preventDefault();
     };
-    const onInject = (e: Event) => {
-      const detail = (e as CustomEvent<{ name?: string; html?: string }>).detail;
-      if (detail?.html) bringIn(detail.html, detail.name);
-    };
     window.addEventListener('paste', onPaste);
-    window.addEventListener('fde2e-film-inject', onInject);
-    return () => { window.removeEventListener('paste', onPaste); window.removeEventListener('fde2e-film-inject', onInject); };
+    return () => { window.removeEventListener('paste', onPaste); };
   }, [open, flash, t, go]);
   /* another project opened: done */
   const latestClose = React.useRef(close);

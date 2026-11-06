@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { anchorTime, EASE_STEP, easedLead, fadeSteps, fileTime, joinAt, JUMP, soundsDue, stretchRate } from './player.ts';
+import { Player, anchorTime, EASE_STEP, easedLead, fadeSteps, fileTime, joinAt, JUMP, soundsDue, stretchRate } from './player.ts';
 import { mediaPlays } from '../../../../src/film-doc.mjs';
 
 test('a sound\'s fades as ramps: where it is now, then each corner after it', () => {
@@ -87,4 +87,24 @@ test('a sound whose file is ready only late joins where the film is then, not wh
   assert.equal(joinAt(s, heard, 12, 2, 2), 5);
   /* ready after it ended (film second 6) */
   assert.equal(joinAt(s, heard, 15.5, 1, 2), null);
+});
+
+
+test('offline range keeps a fade slope and a clip filter excludes overlapping copies of the same file', async () => {
+  const scheduled:unknown[][]=[],starts:unknown[][]=[];
+  const previous=globalThis.OfflineAudioContext;
+  class Offline {
+    destination={};
+    createBufferSource(){return {buffer:null,connect(){return this;},start(...args:unknown[]){starts.push(args);}};}
+    createGain(){return {connect(){return this;},gain:{setValueAtTime(...args:unknown[]){scheduled.push(['set',...args]);},linearRampToValueAtTime(...args:unknown[]){scheduled.push(['ramp',...args]);}}};}
+    async startRendering(){return {} as AudioBuffer;}
+  }
+  Object.defineProperty(globalThis,'OfflineAudioContext',{configurable:true,value:Offline});
+  try{
+    const player=new Player();
+    Object.assign(player,{duration:10,sounds:[{src:'same.wav',clip:'one',at:0,from:0,to:10,speed:1,volume:1,fade:[10,0]},{src:'same.wav',clip:'two',at:0,from:5,to:10,speed:1,volume:1}],buffers:new Map([['same.wav',{buffer:Promise.resolve({})}]]),fetchSounds:()=>false});
+    await player.mixdown(2,4,{clip:'one'});
+    assert.equal(starts.length,1);
+    assert.deepEqual(scheduled,[['set',0.2,0],['ramp',0.4,2]]);
+  }finally{Object.defineProperty(globalThis,'OfflineAudioContext',{configurable:true,value:previous});}
 });

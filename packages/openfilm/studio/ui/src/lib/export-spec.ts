@@ -11,13 +11,14 @@ import { filmFrameBox, type FilmFrameFill, type FilmFrameId } from './film-frame
  * prores4444 for editors and compositing, hevc_alpha for Apple's apps and Safari (a fraction of ProRes's size), vp9
  * for the web, png for anything (game engines, 3D, Nuke), the biggest.
  */
-export type ExportVideoCodec = 'h264' | 'hevc' | 'vp9' | 'prores422hq' | 'prores4444' | 'hevc_alpha' | 'png';
+export type ExportVideoCodec = 'h264' | 'hevc' | 'vp9' | 'prores422hq' | 'prores4444' | 'hevc_alpha' | 'png' | 'mkv';
 export const EXPORT_ALPHA_CODECS: readonly ExportVideoCodec[] = ['prores4444', 'hevc_alpha', 'vp9', 'png'];
 
 export type ExportQuality = 'standard' | 'high' | 'master';
 
 export const CODEC_LABEL: Record<ExportVideoCodec, string> = {
   h264: 'H.264',
+  mkv: 'Matroska (H.264)',
   hevc: 'HEVC',
   vp9: 'WebM VP9',
   prores422hq: 'ProRes 422 HQ',

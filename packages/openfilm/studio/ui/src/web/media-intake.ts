@@ -90,7 +90,11 @@ export async function sniffMediaKind(blob: Blob): Promise<MediaReceipt['kind']> 
 
 export function parseMediaUrl(raw: string): URL {
   let url: URL;
-  try { url = new URL(raw); } catch { throw new MediaIntakeError('invalid-url', 'media URL is invalid'); }
+  const localOrigin = typeof location !== 'undefined' ? location.origin : undefined;
+  try { url = new URL(raw, localOrigin); } catch { throw new MediaIntakeError('invalid-url', 'media URL is invalid'); }
+  if (localOrigin && url.origin === localOrigin && !url.username && !url.password && ['http:','https:'].includes(url.protocol)) {
+    url.hash = ''; return url;
+  }
   if (url.protocol !== 'https:' || url.username || url.password || url.port) {
     throw new MediaIntakeError('invalid-url', 'media URL must be a plain HTTPS address');
   }

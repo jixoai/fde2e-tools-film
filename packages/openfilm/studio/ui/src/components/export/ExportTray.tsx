@@ -165,6 +165,7 @@ export const ExportTray = React.forwardRef<ExportTrayHandle, { projectId: string
 
   return (
     <div
+      data-film-editor-overlay="exports"
       style={{ right: 16 + inset }}
       className="pointer-events-auto fixed bottom-4 z-[120] w-[340px] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-lg)]"
     >

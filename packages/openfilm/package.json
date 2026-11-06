@@ -60,7 +60,7 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "test": "node --test --test-concurrency=1 --test-timeout=300000 src/*.test.mjs studio/*.test.mjs studio/server/*.test.mjs studio/server/providers/*.test.mjs studio/ui/src/editor/*.test.ts studio/ui/src/lib/*.test.ts studio/ui/src/components/*.test.ts",
+    "test": "node --test --test-concurrency=1 --test-timeout=300000 src/*.test.mjs studio/*.test.mjs studio/server/*.test.mjs studio/server/providers/*.test.mjs studio/ui/src/editor/*.test.ts studio/ui/src/lib/*.test.ts studio/ui/src/components/*.test.ts studio/ui/src/web/*.test.ts studio/ui/src/web/opfs/*.test.ts",
     "typecheck": "tsc -p studio/server && tsc -p studio/ui",
     "build:ui": "node studio/ui/scripts/emit-film-runtime.mjs && vite build --config studio/ui/vite.config.ts",
     "prebuild:ui": "node scripts/vendor-ffmpeg.mjs && node scripts/vendor-examples.mjs",

@@ -17,6 +17,7 @@
  * per tool are recorded, never fatal. Response is always a JSON string.
  */
 import { currentProjectId, jsonSchema, say, type ModelContextLike, type WebMCPToolDef } from './webmcp-kit.ts';
+import { projectExtraTools } from './webmcp-projects.ts';
 import { frameRatioOf, type FilmFrameId } from '../lib/film-frame.ts';
 export type { ModelContextLike, WebMCPToolDef } from './webmcp-kit.ts';
 
@@ -26,7 +27,6 @@ type Api = typeof import('../api')['api'];
 const api = async (): Promise<Api> => (await import('../api')).api;
 const historyApiModule = async () => (await import('../lib/project-history.ts')).historyApi;
 const lanes = async () => (await import('./capture-lanes.ts')).availableLanes;
-const canEncode = async () => (await import('./encode-backend.ts')).encodeAvailable;
 const canSaveBack = async () => (await import('./save-back.ts')).saveBackAvailable;
 const webRuntime = async () => import('./web-runtime.ts');
 const webExports = async () => import('./web-export.ts');
@@ -57,6 +57,7 @@ export async function ensureModelContext(): Promise<ModelContextLike | null> {
 /** The four families' tool defs. `openProject` is injected (the App owns navigation). */
 export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[] {
   return [
+    ...projectExtraTools(openProject),
     // ── inspect ──
     {
       name: 'film_state',
@@ -78,7 +79,7 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
           settings,
           capabilities: {
             lanes: (await lanes())().map((l) => l.id),
-            encode: await (await canEncode())('mp4').catch(() => false),
+            encode: (await webExports()).webExportCapabilities().h264,
             saveBack: (await canSaveBack())(),
           },
         });
@@ -180,7 +181,7 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
       description: 'Passive intake only: copy one allowlisted CORS URL or a base64 image/video/audio payload into OPFS assets. No provider is called and no credential is accepted. For large local/Omni artifacts, use the browser bridge upload command on Film’s file input instead.',
       inputSchema: jsonSchema({
         projectId: { type: 'string', description: 'Project id; defaults to the open project' },
-        url: { type: 'string', description: 'HTTPS media URL on images.pexels.com, cdn.pixabay.com or v3.fal.media' },
+        url: { type: 'string', description: 'Same-origin media URL (including hosted examples), or HTTPS on images.pexels.com, cdn.pixabay.com or v3.fal.media' },
         dataBase64: { type: 'string', description: 'Raw base64 or a base64 data URL (max 64 MiB decoded)' },
         name: { type: 'string', description: 'File name. Required for dataBase64; optional for URL.' },
         mime: { type: 'string', description: 'Declared media MIME for raw base64, such as image/png' },
@@ -293,60 +294,47 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
     // ── produce ──
     {
       name: 'produce_look',
-      title: 'Capture a look',
-      description: 'Capture the open film at one exact second through the same in-page preview lane the human viewer sees. Writes a PNG under downloads/ and returns its OPFS path and bytes. Read-only over the edit timeline; creates an export artifact.',
-      inputSchema: jsonSchema({
-        at: { type: 'number', description: 'Film second to capture (default: 0)' },
-        name: { type: 'string', description: 'Output base name (default: <project> - look)' },
-        shortEdge: { type: 'integer', description: 'Output short edge, 64..4096 (default: native short edge)' },
-        frame: { type: 'string', description: 'native or a W:H ratio such as 9:16 (default: native)' },
-        fill: { type: 'string', enum: ['contain', 'cover'], description: 'How the film fits another frame shape' },
-      }),
-      annotations: { readOnlyHint: false },
-      execute: async ({ at, name, shortEdge, frame, fill }, options) => {
-        const id = currentProjectId();
-        if (!id) return say({ error: 'no project is open' });
-        if (at !== undefined && (typeof at !== 'number' || !Number.isFinite(at) || at < 0)) return say({ error: 'at has to be a film second, 0 or more' });
-        if (shortEdge !== undefined && (typeof shortEdge !== 'number' || !Number.isInteger(shortEdge) || shortEdge < 64 || shortEdge > 4096)) return say({ error: 'shortEdge has to be a whole pixel count from 64 to 4096' });
-        const chosenFrame = requestedFrame(frame);
-        if (chosenFrame === null) return say({ error: 'frame has to be native or a W:H ratio from 1:4 to 4:1' });
-        if (fill !== undefined && fill !== 'contain' && fill !== 'cover') return say({ error: 'fill has to be contain or cover' });
-        let runtime;
-        try { runtime = await (await webRuntime()).waitForWebProjectRuntime(id, { signal: options?.signal }); }
-        catch (error) { return say({ error: error instanceof Error ? error.message : String(error) }); }
-        if (typeof at === 'number' && at > runtime.duration() + 1e-3) return say({ error: `at has to stay inside 0..${runtime.duration()}` });
-        const film = await (await api()).film(id);
-        const request = {
-          kind: 'poster' as const, format: 'png' as const, at: typeof at === 'number' ? at : 0,
-          shortEdge: typeof shortEdge === 'number' ? shortEdge : Math.min(runtime.source.size().w, runtime.source.size().h),
-          frame: chosenFrame,
-          fill: fill === 'cover' ? 'cover' as const : 'contain' as const,
-          name: typeof name === 'string' && name.trim() ? name.trim() : `${film.project.name} - look`, label: 'Look',
-        };
-        try {
-          const exports = await webExports(); const store = await opfs();
-          const job = exports.startWebExport(id, request, runtime.source, { putFile: store.putFile, readFile: store.readFileBytes });
-          const result = await exports.waitForWebExport(id, job.id);
-          return result.status === 'done'
-            ? say({ ok: true, jobId: result.id, path: result.outputs[0], bytes: result.bytes, at: request.at, mime: 'image/png' })
-            : say({ error: result.error ?? `look ${result.status}`, jobId: result.id, status: result.status });
-        } catch (error) { return say({ error: error instanceof Error ? error.message : String(error) }); }
+      title: 'Inspect film frames',
+      description: 'Capture one moment, a range or a contact sheet; redraw in reverse order and compare actual pixels for determinism. Returns temporary PNG data and per-frame differences, without modifying project files.',
+      inputSchema: jsonSchema({media:{type:'string',description:'Project source path; inspect it without adding a clip'},at:{type:'number'},range:{type:'array',items:{type:'number'},minItems:2,maxItems:2},moments:{type:'array',items:{type:'number'},minItems:1,maxItems:16},sheet:{type:'boolean'},shortEdge:{type:'integer',minimum:64,maximum:1024},frame:{type:'string'},fill:{type:'string',enum:['contain','cover']}}),
+      annotations:{readOnlyHint:true},
+      execute:async(input,options)=>{
+        try{
+          const id=currentProjectId();if(!id)throw new Error('no project is open');
+          const frame=requestedFrame(input.frame);if(frame===null)throw new Error('invalid frame');
+          if(input.fill!==undefined&&!['contain','cover'].includes(String(input.fill)))throw new Error('invalid fill');
+          if(input.media!==undefined){
+            if(typeof input.media!=='string')throw new Error('media must be a project path');
+            const media=await(await import('./media-look.ts')).mediaLookSource(id,input.media,options?.signal);
+            try{return say({...await(await import('./look.ts')).inspectLook(id,media.source,{...input,frame} as never,options?.signal),media:input.media});}finally{media.close();}
+          }
+          const runtime=await (await webRuntime()).waitForWebProjectRuntime(id,{signal:options?.signal});
+          return say(await (await import('./look.ts')).inspectLook(id,runtime.source,{...input,frame} as never,options?.signal));
+        }catch(error){return say({error:error instanceof Error?error.message:String(error)});}
       },
     },
     {
       name: 'produce_render',
       title: 'Render an export',
-      description: 'Start an MP4/WebM, GIF, PNG-stills or poster export in this browser. Uses the live preview, WebCodecs and same-origin ST ffmpeg where needed; writes atomically to OPFS downloads/. Returns a job immediately by default so long renders outlive the bridge call; poll produce_export_status. Pass wait:true only for a short export that must return exact paths inline. One export runs at a time.',
+      description: 'Start an MP4/WebM/ProRes, audio, GIF, PNG-stills or poster export in this browser. Uses the live preview, WebCodecs and same-origin ST ffmpeg where needed; writes atomically to OPFS downloads/. Returns a job immediately by default so long renders outlive the bridge call; poll produce_export_status. Pass wait:true only for a short export that must return exact paths inline. One export runs at a time.',
       inputSchema: jsonSchema({
-        kind: { type: 'string', enum: ['video', 'gif', 'stills', 'poster'], description: 'Export family (default: video)' },
+        kind: { type: 'string', enum: ['video', 'gif', 'stills', 'poster', 'audio', 'subtitles', 'project'], description: 'Export family (default: video)' },
+        ranges: {type:'array',items:{type:'array',items:{type:'number'},minItems:2,maxItems:2},minItems:1,maxItems:100,description:'Join selected ranges in the supplied order'},
+        clip: {type:'string',description:'Export one visual clip, by its id'},
+        scale: {type:'number',minimum:0.1,maximum:8},
+        quality: {type:'string',enum:['standard','high','master']},
+        burnSubtitles: {type:'boolean'},
+        sidecar: {type:'string',enum:['srt','vtt']},
+        as: {type:'string',enum:['files','zip'],description:'Stills delivery (default files)'},
         name: { type: 'string', description: 'Output base name (default: project name)' },
         from: { type: 'number', description: 'Start second for video/GIF (default: 0)' },
         to: { type: 'number', description: 'End second for video/GIF (default: film end)' },
         at: { type: 'number', description: 'Poster second, or first still second' },
         moments: { type: 'array', items: { type: 'number' }, description: 'Still seconds (max 100)' },
-        codec: { type: 'string', enum: ['h264', 'vp9'], description: 'Video codec/container (default: h264/mp4)' },
+        codec: { type: 'string', enum: ['h264', 'vp9', 'hevc', 'prores422hq', 'prores4444','png','mkv'], description: 'Video codec/container (default: h264/mp4)' },
         audio: { type: 'boolean', description: 'Include the film mix in video (default: true)' },
-        format: { type: 'string', enum: ['png', 'jpg'], description: 'Still/poster format (default: png)' },
+        format: { type: 'string', enum: ['png', 'jpg', 'wav', 'm4a', 'mp3','srt','vtt','txt'], description: 'Still/audio/subtitle format' },
+        stems: { type: 'boolean', description: 'Export individual audio sources as separate tracks' },
         fps: { type: 'number', description: 'Frames a second, 1..60 (default: project fps; GIF default 12)' },
         shortEdge: { type: 'integer', description: 'Video/still short edge, 64..4096 (default: 720)' },
         width: { type: 'integer', description: 'GIF long edge, 64..1920 (default: 640)' },
@@ -360,7 +348,13 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
         const id = currentProjectId();
         if (!id) return say({ error: 'no project is open' });
         const kind = typeof input.kind === 'string' ? input.kind : 'video';
-        if (!['video', 'gif', 'stills', 'poster'].includes(kind)) return say({ error: 'kind has to be video, gif, stills or poster' });
+        if (!['video', 'gif', 'stills', 'poster', 'audio','subtitles','project'].includes(kind)) return say({ error: 'unsupported export kind' });
+        if (input.codec !== undefined && !['h264','vp9','hevc','prores422hq','prores4444','png','mkv'].includes(String(input.codec))) return say({ error: 'unsupported codec' });
+        if (kind === 'audio' && input.format !== undefined && !['wav','m4a','mp3'].includes(String(input.format))) return say({ error: 'unsupported audio format' });
+        if(kind==='subtitles'&&input.format!==undefined&&!['srt','vtt','txt'].includes(String(input.format)))return say({error:'unsupported subtitle format'});
+        if(input.quality!==undefined&&!['standard','high','master'].includes(String(input.quality)))return say({error:'invalid quality'});
+        if(input.sidecar!==undefined&&!['srt','vtt'].includes(String(input.sidecar)))return say({error:'invalid sidecar'});
+        if(input.scale!==undefined&&(typeof input.scale!=='number'||!Number.isFinite(input.scale)||input.scale<0.1||input.scale>8))return say({error:'invalid scale'});
         const chosenFrame = requestedFrame(input.frame);
         if (chosenFrame === null) return say({ error: 'frame has to be native or a W:H ratio from 1:4 to 4:1' });
         if (input.fill !== undefined && input.fill !== 'contain' && input.fill !== 'cover') return say({ error: 'fill has to be contain or cover' });
@@ -370,9 +364,10 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
         const duration = runtime.duration(); const from = typeof input.from === 'number' ? input.from : 0;
         const to = typeof input.to === 'number' ? input.to : duration;
         const fps = typeof input.fps === 'number' ? input.fps : kind === 'gif' ? 12 : runtime.fps();
-        if (!(duration > 0)) return say({ error: 'the open film has no duration yet' });
+        if (!(duration > 0) && kind!=='project') return say({ error: 'the open film has no duration yet' });
+        if(input.ranges!==undefined&&(!Array.isArray(input.ranges)||!input.ranges.length||input.ranges.length>100||input.ranges.some(r=>!Array.isArray(r)||r.length!==2||!r.every(Number.isFinite)||r[0]<0||r[1]<=r[0]||r[1]>duration)))return say({error:'invalid export ranges'});
         if (!(fps >= 1 && fps <= 60)) return say({ error: 'fps has to be from 1 to 60' });
-        if ((kind === 'video' || kind === 'gif') && (!(from >= 0) || !(to > from) || to > duration + 1e-3)) return say({ error: `range has to stay inside 0..${duration}` });
+        if ((kind === 'video' || kind === 'gif' || kind === 'audio') && (!(from >= 0) || !(to > from) || to > duration + 1e-3)) return say({ error: `range has to stay inside 0..${duration}` });
         const shortEdge = typeof input.shortEdge === 'number' ? input.shortEdge : 720;
         if (!Number.isInteger(shortEdge) || shortEdge < 64 || shortEdge > 4096) return say({ error: 'shortEdge has to be a whole pixel count from 64 to 4096' });
         const width = typeof input.width === 'number' ? input.width : 640;
@@ -381,13 +376,27 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
         if (moments.length > 100 || moments.some((value) => typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > duration)) return say({ error: `moments have to stay inside 0..${duration} (max 100)` });
         const film = await (await api()).film(id); const name = typeof input.name === 'string' && input.name.trim() ? input.name.trim() : film.project.name;
         const common = { name, label: kind === 'video' ? 'Video' : kind.toUpperCase(), frame: chosenFrame, fill: input.fill === 'cover' ? 'cover' as const : 'contain' as const };
-        const request = kind === 'video'
-          ? { ...common, kind: 'video' as const, codec: input.codec === 'vp9' ? 'vp9' as const : 'h264' as const, fps, quality: 'high' as const, audio: input.audio !== false, shortEdge, range: [from, to] as [number, number] }
+        const request: import('../lib/export-jobs.ts').ExportRequest = kind === 'project'
+          ? {kind:'project',as:'zip',parts:[],name}
+          : kind==='subtitles' ? {kind:'subtitles',format:(input.format??'srt') as 'srt'|'vtt'|'txt',name,range:[from,to]}
+          : kind === 'video'
+          ? { ...common, kind: 'video' as const, codec: (input.codec ?? 'h264') as import('../lib/export-spec.ts').ExportVideoCodec, fps, quality: 'high' as const, audio: input.audio !== false, shortEdge, range: [from, to] as [number, number] }
+          : kind === 'audio'
+            ? { name, label: 'Audio', kind: 'audio' as const, format: (input.format ?? 'wav') as 'wav' | 'm4a' | 'mp3', mix: true, stems: input.stems === true, range: [from,to] as [number,number] }
           : kind === 'gif'
             ? { ...common, kind: 'gif' as const, fps, width, range: [from, to] as [number, number] }
             : kind === 'poster'
               ? { ...common, kind: 'poster' as const, format: input.format === 'jpg' ? 'jpg' as const : 'png' as const, shortEdge, at: moments[0] ?? 0 }
               : { ...common, kind: 'stills' as const, as: 'files' as const, format: input.format === 'jpg' ? 'jpg' as const : 'png' as const, shortEdge, at: moments };
+        if(input.ranges) {request.ranges=input.ranges as [number,number][];delete request.range;}
+        if(request.kind==='video'){
+          if(typeof input.clip==='string'){request.clip=input.clip;if(input.from===undefined&&input.to===undefined)delete request.range;}
+          if(typeof input.scale==='number')request.scale=input.scale;
+          request.quality=(input.quality??'high') as 'standard'|'high'|'master';
+          if(input.sidecar)request.sidecar=input.sidecar as 'srt'|'vtt';
+        }
+        if('frame' in request)request.burnSubtitles=input.burnSubtitles===true;
+        if(request.kind==='stills')request.as=input.as==='zip'?'zip':'files';
         try {
           const exports = await webExports(); const store = await opfs();
           const job = exports.startWebExport(id, request, runtime.source, { putFile: store.putFile, readFile: store.readFileBytes });
@@ -402,6 +411,18 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
       },
     },
     {
+      name: 'produce_cancel_export',
+      title: 'Cancel an export',
+      description: 'Cancel the open project’s running export by its job id. Poll export_status for the terminal cancelled result.',
+      inputSchema: jsonSchema({ jobId: { type: 'string' } }, ['jobId']),
+      annotations: { readOnlyHint: false },
+      execute: async ({ jobId }) => {
+        const id = currentProjectId();
+        if (!id || typeof jobId !== 'string') return say({ error: 'open project and jobId are required' });
+        return say({ ok: true, requested: (await webExports()).cancelWebExport(id, jobId) });
+      },
+    },
+    {
       name: 'produce_export_status',
       title: 'Export status',
       description: 'Read preview readiness, current Web export jobs, encode capabilities, byte totals and project versions. Read-only.',
@@ -412,7 +433,7 @@ export function filmToolDefs(openProject: (id: string) => void): WebMCPToolDef[]
         const exports = await webExports();
         return say({
           projectId: id, previewReady: id ? Boolean((await webRuntime()).webProjectRuntime(id)) : false,
-          encodeAvailable: await (await canEncode())('mp4').catch(() => false),
+          encodeAvailable: exports.webExportCapabilities().h264,
           capabilities: exports.webExportCapabilities(), busy: id ? exports.webExportBusy(id) : false,
           bytes: id ? exports.webExportBytes(id) : 0,
           jobs: id ? exports.listWebExports(id).map((job) => ({

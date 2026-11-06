@@ -1,3 +1,4 @@
+import { capturePluginFrame, pluginCaptureAvailable, probePluginCapture } from '../web/plugin-capture.ts';
 /**
  * A project in Studio: the top bar, then the assets, the picture and the inspector side by side, and the timeline
  * across the bottom. Every pane floats on the darker board; the seams between them are the board showing through and
@@ -307,6 +308,8 @@ export function ProjectView({ projectId, onProject, onLeave }: {
   personSteps.current = film.steps.done;
   const filmRef = React.useRef(film.film);
   filmRef.current = film.film;
+  const filmReady = React.useRef(film.ready);
+  filmReady.current = film.ready;
   /* on `showError`, which stays the same: `toast` is new with every message, so showing it would run this again, and
      again (the editor gone) */
   const { showError } = toast;
@@ -418,6 +421,8 @@ export function ProjectView({ projectId, onProject, onLeave }: {
   const player = React.useRef(new Player());
   const projectFpsRef = React.useRef(30);
   const webPreviewSource = React.useMemo(() => ({
+    open:async(signal:AbortSignal)=>(await import('../web/render-preview.ts')).renderPreview(projectId,filmRef.current?.stage??{w:1920,h:1080},signal),
+    ready: () => filmReady.current() && Boolean(preview.current?.ready?.()),
     seek: async (t: number) => {
       const wanted = Math.max(0, t);
       /* Preview may atomically swap in a freshly loaded iframe while a long export is stepping
@@ -427,6 +432,7 @@ export function ProjectView({ projectId, onProject, onLeave }: {
       await new Promise<void>((resolve, reject) => {
         let lastWindow: Window | null = null;
         let lastSent = 0;
+        let lastSequence = 0;
         let settled = false;
         const cleanup = () => {
           settled = true;
@@ -440,13 +446,14 @@ export function ProjectView({ projectId, onProject, onLeave }: {
           if (error) reject(error); else resolve();
         };
         const send = () => {
+          if (!filmReady.current() || !preview.current?.ready?.()) return;
           const current = preview.current?.frame?.()?.contentWindow ?? null;
           if (!current) return;
           const now = performance.now();
           if (current === lastWindow && now - lastSent < 1_500) return;
           lastWindow = current;
           lastSent = now;
-          preview.current?.seek(wanted);
+          lastSequence = preview.current?.seek(wanted, true) ?? 0;
         };
         const onMessage = (event: MessageEvent) => {
           if (event.origin !== location.origin || event.data?.source !== 'openfilm-film') return;
@@ -456,22 +463,34 @@ export function ProjectView({ projectId, onProject, onLeave }: {
             finish(new Error(`the Film preview could not draw ${wanted.toFixed(3)}s: ${String(event.data.message ?? 'unknown error')}`));
             return;
           }
-          if (event.data?.type === 'seeked' && Math.abs(Number(event.data.t) - wanted) <= 1e-3) finish();
+          if (event.data?.type === 'seeked' && current === lastWindow && preview.current?.ready?.()
+            && Number(event.data.seq) >= lastSequence && Math.abs(Number(event.data.t) - wanted) <= 1e-3) finish();
         };
         const timeout = window.setTimeout(() => finish(new Error(`the Film preview did not draw ${wanted.toFixed(3)}s in time`)), 20_000);
         const pulse = window.setInterval(send, 100);
         window.addEventListener('message', onMessage);
         send();
       });
+      // A seeked message can precede React committing the newly shown iframe's data-loading
+      // attribute. The browser capture lane reads the committed compositor tree.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     },
-    capture: async () => {
+    capture: async (transparent = false) => {
       const frame = preview.current?.frame?.() ?? null;
       if (!frame) throw new Error('the Film preview is not ready');
-      return capturePreviewFrame(frame, filmRef.current?.stage ?? { w: 1920, h: 1080 });
+      if (transparent) return capturePreviewFrame(frame, filmRef.current?.stage ?? { w: 1920, h: 1080 }, true);
+      if (pluginCaptureAvailable()) return capturePluginFrame();
+      try { return await capturePreviewFrame(frame, filmRef.current?.stage ?? { w: 1920, h: 1080 }); }
+      catch (error) { if (await probePluginCapture()) return capturePluginFrame(); throw error; }
     },
     size: () => filmRef.current?.stage ?? { w: 1920, h: 1080 },
     duration: () => player.current.duration,
-    audio: (from: number, to: number) => player.current.mixdown(from, to),
+    audio: (from: number, to: number, signal?: AbortSignal) => player.current.mixdown(from, to, undefined, signal),
+    stems: (from: number, to: number, signal?:AbortSignal) => player.current.mixStems(from, to,signal),
+    clip: async (id: string): Promise<import('../web/web-export.ts').PreviewPixelSource> => {
+      const {clipPixelSource}=await import('../web/clip-source.ts');
+      return clipPixelSource(webPreviewSource,()=>preview.current?.frame?.()??null,id,(clip,from,to)=>player.current.mixdown(from,to,{clip}));
+    },
   }), []);
   const webRuntimeReady = info !== null;
   React.useEffect(() => {

@@ -54,6 +54,7 @@ export function useFilm(projectId: string, initial: FilmState | null, onChange: 
   const ref = useRef(state);
   ref.current = state;
   const queue = useRef(Promise.resolve());
+  const refreshing = useRef(0);
   /**
    * revisions this editor wrote, oldest first: their echo from the folder watcher is not news. The watcher reports the
    * file as it is once writes settle, so an echo also stands for every write before it, unreported; those are
@@ -92,7 +93,8 @@ export function useFilm(projectId: string, initial: FilmState | null, onChange: 
     /* the same text as here is news only after the file could not be read (written whole again) */
     if (event.rev === ref.current?.rev && !brokenRev.current) return;
     /* not read: Studio went away (it was stopping) — it tells again when it is back */
-    void queue.current.then(fromServer).catch(() => {});
+    refreshing.current += 1;
+    queue.current = queue.current.then(fromServer).then(() => {}, () => {}).finally(() => { refreshing.current -= 1; });
   }), [projectId, fromServer]);
 
   /**
@@ -226,5 +228,6 @@ export function useFilm(projectId: string, initial: FilmState | null, onChange: 
   return {
     film: state?.value ?? null, rev: state?.rev ?? null, error, broken, edit, record, undo, redo, rollbackTo, forget, steps,
     canUndo: steps.done.length > 0, canRedo: steps.undone.length > 0, settled: () => queue.current,
+    ready: () => pending.current === 0 && refreshing.current === 0,
   };
 }

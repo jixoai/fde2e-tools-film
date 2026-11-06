@@ -147,6 +147,7 @@ function loadSettings(language: string, projectFps: number): Settings {
       const { format, ...framing } = raw.slides ?? {};
       Object.assign(images, framing, { as: format === 'pdf' ? 'pdf' : 'pptx' });
     }
+    if (isWeb() && images.as !== 'files' && images.as !== 'zip') images.as = 'zip';
     const offered = exportPresetsFor(language);
     const previousPlatform = Array.isArray(raw.presets)
       ? raw.presets.find((id) => offered.some((p) => p.id === id))
@@ -186,7 +187,7 @@ const STILL_EDGES = [720, 1080, 1440, 2160];
 const FPS_CHOICES = FRAME_RATES;
 const GIF_WIDTHS = [320, 480, 640, 800, 1080];
 const GIF_FPS = [10, 12, 15, 20, 24];
-const VIDEO_CODECS: ExportVideoCodec[] = ['h264', 'hevc', 'prores422hq', 'prores4444', 'hevc_alpha', 'vp9', 'png'];
+const VIDEO_CODECS: ExportVideoCodec[] = ['h264', 'hevc', 'prores422hq', 'prores4444', 'hevc_alpha', 'vp9', 'png', 'mkv'];
 const ALPHA_SCALES = [0.5, 1, 2];
 /** The rates editors take; a source at another NTSC rate (23.976, 59.94) comes as the "source" choice. */
 const NLE_FPS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
@@ -200,6 +201,7 @@ function codecAvailable(codec: ExportVideoCodec, can: ExportCapabilities | null)
   if (!can) return true;
   switch (codec) {
     case 'h264': return can.h264;
+    case 'mkv': return isWeb() && can.h264;
     case 'hevc': return can.hevc;
     case 'hevc_alpha': return can.hevcAlpha;
     case 'vp9': return can.vp9;
@@ -378,7 +380,7 @@ export function ExportCenter(props: ExportCenterProps) {
     }));
   };
 
-  const dest: Dest = DESTS.some((d) => d.id === s.dest) ? s.dest : 'video';
+  const dest: Dest = DESTS.some((d) => d.id === s.dest) && !(isWeb() && s.dest === 'nle') ? s.dest : 'video';
   const imageDocument = s.images.as === 'pdf' || s.images.as === 'pptx';
   const alphaBlock = blocks.find((b) => b.clipId === s.alpha.source);
   const canRange = totalMs > 0 && (dest === 'video' || dest === 'gif' || dest === 'audio' || dest === 'subtitles' || (dest === 'alpha' && !alphaBlock));
@@ -456,7 +458,7 @@ export function ExportCenter(props: ExportCenterProps) {
       }
       case 'project':
         return [{
-          kind: 'project', as: s.project.as, parts: projectParts,
+          kind: 'project', as: isWeb() ? 'zip' : s.project.as, parts: isWeb() ? [] : projectParts,
           label: t(s.project.as === 'zip' ? 'exportCenter.projectZip' : 'exportCenter.projectFolder'),
         }];
     }
@@ -548,16 +550,8 @@ export function ExportCenter(props: ExportCenterProps) {
         // the web face: the page works the export itself (lib/web-export); one at a time
         const source = props.webSource();
         if (!source) { setResult({ ok: false, text: t('exportCenter.engineDown') }); setWorking(null); return; }
-        const { startWebExport } = await import('@/web/web-export');
-        const queued: ExportJob[] = [];
-        for (const request of named) {
-          try {
-            queued.push(startWebExport(props.projectId, request, source, { putFile: storePut.putFile, readFile: storePut.readFileBytes }));
-          } catch (e) {
-            if (!queued.length) { setResult({ ok: false, text: e instanceof Error ? e.message : String(e) }); setWorking(null); return; }
-            break; // the first landed; the rest wait for it (one queue)
-          }
-        }
+        const { queueWebExports } = await import('@/web/web-export');
+        const queued = queueWebExports(props.projectId, named, source, { putFile: storePut.putFile, readFile: storePut.readFileBytes });
         props.onQueued?.(queued);
         onClose();
         return;
@@ -623,7 +617,7 @@ export function ExportCenter(props: ExportCenterProps) {
         <nav className="flex min-h-0 w-[212px] shrink-0 flex-col border-r border-[var(--border-soft)] bg-[var(--surface-2)]">
           <h2 className="shrink-0 px-5 pb-2 pt-4 text-[15px] font-semibold tracking-tight text-[var(--text)]">{t('exportCenter.title')}</h2>
           <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-3 pb-2">
-          {DESTS.map((d) => {
+          {DESTS.filter((d) => !isWeb() || d.id !== 'nle').map((d) => {
             const on = dest === d.id;
             return (
               <button
@@ -640,14 +634,14 @@ export function ExportCenter(props: ExportCenterProps) {
                   <span className={`block text-[13px] font-medium ${on ? 'text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
                     {t(`exportCenter.dest.${d.id}`)}
                   </span>
-                  <span className="block text-[11px] leading-snug text-[var(--text-faint)]">{tApp(`exportCenter.destHint.${d.id}`)}</span>
+                  <span className="block text-[11px] leading-snug text-[var(--text-faint)]">{tApp(`exportCenter.destHint.${isWeb() && d.id === 'images' ? 'imagesWeb' : d.id}`)}</span>
                 </span>
               </button>
             );
           })}
           </div>
           <div className="shrink-0 border-t border-[var(--border-soft)] px-5 py-3 text-[10.5px] leading-relaxed text-[var(--text-faint)]">
-            {t('exportCenter.engineDesktop')}
+            {t(isWeb() ? 'exportCenter.engineWeb' : 'exportCenter.engineDesktop')}
           </div>
         </nav>
 
@@ -656,7 +650,7 @@ export function ExportCenter(props: ExportCenterProps) {
           <div className="flex shrink-0 items-center gap-2 px-5 pb-1 pt-4">
             <div className="min-w-0 flex-1">
               <h3 className="text-[14px] font-semibold text-[var(--text)]">{t(`exportCenter.dest.${dest}`)}</h3>
-              <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-muted)]">{tApp(`exportCenter.destDesc.${dest}`)}</p>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-muted)]">{tApp(`exportCenter.destDesc.${isWeb() && (dest === 'images' || dest === 'project') ? `${dest}Web` : dest}`)}</p>
             </div>
             <button
               type="button"
@@ -700,7 +694,7 @@ export function ExportCenter(props: ExportCenterProps) {
                   </Field>
                   <Field label={t('exportCenter.codec')}>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      {VIDEO_CODECS.map((c) => {
+                      {VIDEO_CODECS.filter(c => isWeb() ? c !== 'hevc_alpha' : c !== 'mkv').map((c) => {
                         const unavailable = !codecAvailable(c, can);
                         return (
                           <OptionCard
@@ -708,7 +702,7 @@ export function ExportCenter(props: ExportCenterProps) {
                             on={videoCodec === c}
                             disabled={unavailable}
                             title={codecName(c)}
-                            desc={unavailable ? t('exportCenter.notOnThisComputer') : t(`exportCenter.codecHint.${c}`)}
+                            desc={unavailable ? t('exportCenter.notOnThisComputer') : c === 'mkv' ? 'H.264 · Matroska' : t(`exportCenter.codecHint.${c}`)}
                             onClick={() => patch('video', { codec: c })}
                           />
                         );
@@ -993,7 +987,7 @@ export function ExportCenter(props: ExportCenterProps) {
                 <>
                   <Field label={t('exportCenter.format')}>
                     <div className="grid grid-cols-2 gap-2">
-                      {(['zip', 'folder'] as const).map((as) => (
+                      {(['zip', 'folder'] as const).filter((as) => !isWeb() || as === 'zip').map((as) => (
                         <OptionCard
                           key={as}
                           on={s.project.as === as}
@@ -1014,7 +1008,7 @@ export function ExportCenter(props: ExportCenterProps) {
                         hint={t('exportCenter.projectPartHint.work')}
                         size={projectSizes ? formatBytes(projectSizes.work) : ''}
                       />
-                      {PROJECT_PARTS.map((part) => {
+                      {(isWeb() ? [] : PROJECT_PARTS).map((part) => {
                         const none = projectSizes != null && projectSizes[part] == null;
                         return (
                           <PartToggle
@@ -1055,7 +1049,7 @@ export function ExportCenter(props: ExportCenterProps) {
                   <div className="flex min-w-0 flex-col gap-5">
                     <Field label={t('exportCenter.imageOutput')}>
                       <div className="grid grid-cols-2 gap-2">
-                        {IMAGE_OUTPUTS.map((output) => (
+                        {IMAGE_OUTPUTS.filter((output) => !isWeb() || output === 'files' || output === 'zip').map((output) => (
                           <OptionCard
                             key={output}
                             on={s.images.as === output}

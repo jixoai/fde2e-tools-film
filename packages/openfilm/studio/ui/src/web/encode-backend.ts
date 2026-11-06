@@ -54,7 +54,7 @@ export async function encodeAvailable(container: EncodeContainer, width = 1920, 
 /** The codec the container wants, checked against the device: h264 for mp4 (the universal one),
     vp9 for webm; av1 tried first for mp4 when the device has it (smaller at the same quality). */
 async function pickVideoCodec(container: EncodeContainer, width: number, height: number): Promise<VideoCodec | null> {
-  const wants: VideoCodec[] = container === 'mp4' ? ['avc', 'hevc', 'av1'] : ['vp9', 'vp8', 'av1'];
+  const wants: VideoCodec[] = container === 'mp4' ? ['avc'] : ['vp9'];
   for (const codec of wants) {
     if (await canEncodeVideo(codec, { width, height }).catch(() => false)) return codec;
   }

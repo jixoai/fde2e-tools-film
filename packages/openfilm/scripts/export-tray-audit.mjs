@@ -77,7 +77,7 @@ try {
     }
     try {
       await page.goto(`${base}/index-web.html`, { waitUntil: 'load', timeout: 60_000 });
-      await page.waitForFunction(() => window.__webmcp_registered_tools?.size === 35, undefined, { timeout: 60_000 });
+      await page.waitForFunction(() => window.__webmcp_registered_tools?.size === 44, undefined, { timeout: 60_000 });
       const example = await page.evaluate(async () => JSON.parse(await window.__webmcp_registered_tools.get('projects_load_example')._execute({ id: 'one-prompt' }, { signal: new AbortController().signal })));
       assert(example.ok === true, `${label} example=${JSON.stringify(example)}`);
       await page.waitForURL(new RegExp(`/projects/${example.id}$`), { timeout: 120_000 });

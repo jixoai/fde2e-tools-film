@@ -5,3 +5,4 @@
  */
 export { listProjects, getProject, createProject, createProjectFromFiles, deleteProject, renameProject, markOpened, setCover, readFilm, writeFilm, filmRev, listFiles, readFileText, readFileBytes, putFile, deleteFile, subscribe, tellHistory, type ProjectSeedFile } from './store.ts';
 export type { StoreEvent, StoreFile, StoreListing, StoreListener, StoreProject } from './types.ts';
+export { writePage } from './store.ts';

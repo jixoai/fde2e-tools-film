@@ -3,7 +3,7 @@
  * Release-polish browser regression for the static Web face.
  *
  * This is deliberately an application workflow, not an encoder fixture: it loads the bundled
- * example through the same 35-tool WebMCP surface an agent uses, verifies save→edit→restore,
+ * example through the same 44-tool WebMCP surface an agent uses, verifies save→edit→restore,
  * renders a short MP4 with audio synchronously, then starts a 30-second bounded-memory render
  * asynchronously and polls the public job surface. Finally it reloads the SPA and proves the
  * project and both OPFS deliverables survived. No production or omni origin is contacted.
@@ -41,7 +41,7 @@ const findChrome = () => {
 };
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const waitForTools = async (page) => {
-  await page.waitForFunction(() => window.__webmcp_registered_tools?.size === 35, undefined, { timeout: 60_000, polling: 250 });
+  await page.waitForFunction(() => window.__webmcp_registered_tools?.size === 44, undefined, { timeout: 60_000, polling: 250 });
 };
 const call = (page, name, input = {}) => page.evaluate(async ([toolName, args]) => {
   const tool = window.__webmcp_registered_tools?.get(toolName);
@@ -125,14 +125,14 @@ const inspectVideo = (page, projectId, path) => page.evaluate(async ({ id, outpu
     URL.revokeObjectURL(url);
   }
 }, { id: projectId, outputPath: path });
-const inspectImage = (page, projectId, path, points) => page.evaluate(async ({ id, outputPath, samples }) => {
+const inspectImage = (page, projectId, path, points, pictureHeight) => page.evaluate(async ({ id, outputPath, samples, pictureHeight }) => {
   const encodedPath = outputPath.split('/').map(encodeURIComponent).join('/');
-  const response = await fetch(`/wf/${encodeURIComponent(id)}/${encodedPath}`);
+  const response = await fetch(outputPath.startsWith('data:') ? outputPath : `/wf/${encodeURIComponent(id)}/${encodedPath}`);
   if (!response.ok) throw new Error(`image fetch failed: ${response.status}`);
   const blob = await response.blob();
   const bitmap = await createImageBitmap(blob);
   const canvas = document.createElement('canvas');
-  canvas.width = bitmap.width; canvas.height = bitmap.height;
+  canvas.width = bitmap.width; canvas.height = pictureHeight ?? bitmap.height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('image pixel probe has no 2D canvas');
   ctx.drawImage(bitmap, 0, 0);
@@ -143,7 +143,7 @@ const inspectImage = (page, projectId, path, points) => page.evaluate(async ({ i
       [...ctx.getImageData(Math.floor(x * canvas.width), Math.floor(y * canvas.height), 1, 1).data.slice(0, 3)],
     ])),
   };
-}, { id: projectId, outputPath: path, samples: points });
+}, { id: projectId, outputPath: path, samples: points, pictureHeight });
 const screenshot = async (page, name) => {
   if (!imageDir) return null;
   const path = join(imageDir, name);
@@ -184,7 +184,7 @@ try {
     coi: crossOriginIsolated,
     sab: typeof SharedArrayBuffer,
   }));
-  assert(boot.title === 'FDE2E Film' && boot.tools === 35 && boot.rootChildren > 0, `boot=${JSON.stringify(boot)}`);
+  assert(boot.title === 'FDE2E Film' && boot.tools === 44 && boot.rootChildren > 0, `boot=${JSON.stringify(boot)}`);
   assert(boot.coi === false && boot.sab === 'undefined', `unexpected COI/SAB=${JSON.stringify(boot)}`);
 
   const loaded = await call(page, 'projects_load_example', { id: 'one-prompt' });
@@ -296,18 +296,20 @@ try {
   const clipInsert = await call(page, 'edit_insert_clip', { src: 'mixed.html', at: 0, time: [0, 1], newTrack: 1 });
   assert(clipInsert.ok === true, `DOM clip insert=${JSON.stringify(clipInsert)}`);
   await waitForPreview(page, 0.9, 60_000);
-  const domLook = await call(page, 'produce_look', { at: 0.5, name: 'mixed-dom', shortEdge: 200 });
-  assert(domLook.ok === true && domLook.bytes > 0, `DOM look=${JSON.stringify(domLook)}`);
-  const domImage = await inspectImage(page, domProject.id, domLook.path, {
+  const beforeLookJobs = await call(page, 'produce_export_status');
+  const domLook = await call(page, 'produce_look', { at: 0.5, shortEdge: 200 });
+  assert(domLook.ok === true && domLook.sheet?.dataUrl && domLook.determinism?.same, 'DOM look must return repeatable pixels');
+  const domImage = await inspectImage(page, domProject.id, domLook.sheet.dataUrl, {
     red: [0.75, 0.75], blue: [0.5, 0.5], green: [0.9, 0.1], yellow: [0.1, 0.9],
-  });
+  }, domLook.frames[0].h);
   const [red, blue, green, yellow] = ['red', 'blue', 'green', 'yellow'].map((name) => domImage.samples[name]);
   assert(red[0] > 150 && red[1] < 80, `DOM red layer=${JSON.stringify(domImage)}`);
   assert(blue[2] > 150 && blue[0] < 80, `DOM img layer=${JSON.stringify(domImage)}`);
   assert(green[1] > 150 && green[0] < 80, `DOM element layer=${JSON.stringify(domImage)}`);
   assert(yellow[0] > 150 && yellow[1] > 150 && yellow[2] < 80, `DOM canvas layer=${JSON.stringify(domImage)}`);
   const domMedia = await call(page, 'projects_list_media', { projectId: domProject.id });
-  assert(domMedia.files?.some((file) => file.path === domLook.path), `DOM look not persisted=${JSON.stringify(domMedia)}`);
+  assert(!domMedia.files?.some((file) => file.path.startsWith('downloads/')), 'inspection must not create a phantom download');
+  assert((await call(page, 'produce_export_status')).jobs.length === beforeLookJobs.jobs.length, 'inspection must not create an export job');
   const s5 = await screenshot(page, 's5-mixed-dom-capture.png');
 
   const foreign = requests.filter((url) => /^https?:/.test(url) && new URL(url).origin !== base);
@@ -328,7 +330,7 @@ try {
     short: { receipt: short, video: shortVideo, status: shortJob },
     long: { receipt: long, status: longJob, video: longVideo, pollCount, heapBefore, heapPeak, heapGrowth },
     persistence: { project: persisted.project, outputs: [short.paths[0], longJob.outputs[0]], short: persistedShort, long: persistedLong },
-    domCapture: { projectId: domProject.id, receipt: domLook, image: domImage, persisted: true },
+    domCapture: { projectId: domProject.id, receipt: domLook, image: domImage, persisted: false },
     network: { requests: requests.length, foreign: foreign.length, forbiddenOmni: forbidden.length },
     errors: { page: pageErrors, console: seriousConsole },
   };
@@ -354,7 +356,7 @@ try {
         { id: 'S2', intent: '保存版本→改舞台→checkout 恢复，并同步导出 1 秒带音频 MP4', expect: '版本恢复无脏状态；MP4 可解码可 seek', assertion: `commit=${saved.commit}; restored=1920×1080; bytes=${short.bytes}; duration=${shortVideo.duration.toFixed(3)}s; seek=${shortVideo.seeked.toFixed(3)}s`, ok: true, ...(s2 ?? {}) },
         { id: 'S3', intent: '以 wait:false 启动 30 秒真实导出并轮询公开 status', expect: '调用立即返回 job；终态 done；JS heap 增长 <128MiB', assertion: `job=${long.jobId}; polls=${pollCount}; bytes=${longJob.bytes}; duration=${longVideo.duration.toFixed(3)}s; heapGrowth=${(heapGrowth / 1024 / 1024).toFixed(1)}MiB`, ok: true, ...(s3 ?? {}) },
         { id: 'S4', intent: '刷新同一 SPA 项目路由', expect: '项目、版本恢复结果和两份 downloads/ MP4 仍在 OPFS', assertion: `project=${persisted.project.id}; outputs=2; short=${persistedShort.bytes}B; long=${persistedLong.bytes}B; foreign=0`, ok: true, ...(s4 ?? {}) },
-        { id: 'S5', intent: '建立含 DOM 背景、img、普通元素与 canvas 的同源页面并导出 look', expect: '四个图层都保留原位置/颜色，输出持久写入 downloads/', assertion: `project=${domProject.id}; path=${domLook.path}; bytes=${domImage.bytes}; pixels=${JSON.stringify(domImage.samples)}`, ok: true, ...(s5 ?? {}) },
+        { id: 'S5', intent: '检查含 DOM 背景、img、普通元素与 canvas 的同源页面', expect: '四图层保留原位置/颜色；正反复绘一致，检查不创建下载或导出任务', assertion: `project=${domProject.id}; bytes=${domImage.bytes}; pixels=${JSON.stringify(domImage.samples)}; determinism=${domLook.determinism.same}`, ok: true, ...(s5 ?? {}) },
       ] }],
       summary: { pass: 5, fail: 0 },
     };

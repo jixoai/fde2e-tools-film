@@ -332,6 +332,7 @@ export const ja: Words = {
       nle: '編集プロジェクト',
     },
     destHint: {
+      imagesWeb: "画像または ZIP",
       social: '各プラットフォーム向けプリセット',
       video: 'コーデック、サイズ、画質',
       gif: 'ドキュメント、メール、README 用',
@@ -343,6 +344,8 @@ export const ja: Words = {
       nle: '{app}、Final Cut Pro、Premiere Pro、DaVinci Resolve',
     },
     destDesc: {
+      projectWeb: "フィルム、ページ、メディアを含む ZIP。FDE2E Film で開けます。",
+      imagesWeb: "フィルムからフレームを選び、個別の画像または ZIP として保存します。",
       social: 'プラットフォームを 1 つ以上選んでください。それぞれに合った形、サイズ、フレームレートで、まとめて書き出します。',
       video: 'コーデック、フレーム、解像度、画質を細かく指定して 1 本のビデオを書き出します。',
       gif: 'ループするアニメーション画像です。短く小さめに — GIF はすぐに大きくなります。',
@@ -506,6 +509,7 @@ export const ja: Words = {
     noAudio: 'この映像にはサウンドがありません。',
     noFolder: '先に保存先を選んでください。',
     engineDown: 'ローカルエンジンが応答しません。FDE2E Film を再起動してもう一度お試しください。',
+    engineWeb: "このブラウザーでレンダリングします。形式に応じてハードウェアまたはソフトウェアでエンコードし、プロジェクトはこの端末に保存されます。",
     engineDesktop: 'このコンピューター上でハードウェアエンコードによりレンダリングします。何もアップロードされません。',
     queueing: '開始しています…',
     export: '書き出し',

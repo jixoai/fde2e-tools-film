@@ -8,8 +8,10 @@
  * Revisions are content hashes of the film text (film-doc.mjs `filmRev`), so an edit made against
  * rev R lands only if the film is still at R — the same optimistic-concurrency the server kept.
  */
-import { children, ensureDir, projectDir, readBytes, readText, removeFile, removeTree, root, statFile, walk, writeBytes, writeText } from './fs.ts';
+import { children, ensureDir, projectDir, readBytes, readText, removeFile, removeTree, root, writeBytes, writeText } from './fs.ts';
 import { newId, untitled } from './id.ts';
+import { projectFiles, internalRoot, sourceState } from './project-files.ts';
+import { withProjectLock } from './project-lock.ts';
 import { emptyFilmHtml } from './film-template.ts';
 import type { StoreEvent, StoreFile, StoreListing, StoreListener, StoreProject } from './types.ts';
 
@@ -20,7 +22,6 @@ const STATE_OPENED = 'opened';
 const STATE_COVER = 'cover.ts';
 const FILM = 'film.html';
 const ASSETS = 'assets';
-const DOWNLOADS = 'downloads';
 
 const listeners = new Set<StoreListener>();
 let channel: BroadcastChannel | null = null;
@@ -99,8 +100,8 @@ export async function getProject(id: string): Promise<StoreProject | null> {
 
 export type ProjectSeedFile = { path: string; data: Blob | ArrayBuffer | string };
 
-const safeSeedPath = (path: string): boolean => path.length > 0 && path.length <= 240
-  && !path.startsWith('/') && !path.includes('\\')
+export const safeProjectPath = (path: string): boolean => path.length > 0 && path.length <= 240
+  && !path.startsWith('/') && !path.includes('\\') && (!internalRoot(path.split('/')[0]) || (path.startsWith('.film/') && sourceState.has(path.slice(6))))
   && path.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
 const RESERVED_STATE_FILES = new Set([
   `${STATE}/${STATE_ID}`, `${STATE}/${STATE_NAME}`, `${STATE}/${STATE_OPENED}`, `${STATE}/${STATE_COVER}`,
@@ -118,7 +119,7 @@ export async function createProjectFromFiles(
 ): Promise<StoreProject> {
   const seen = new Set<string>();
   for (const file of files) {
-    if (!safeSeedPath(file.path) || seen.has(file.path) || RESERVED_STATE_FILES.has(file.path)) {
+    if (!safeProjectPath(file.path) || seen.has(file.path) || RESERVED_STATE_FILES.has(file.path)) {
       throw new Error(`invalid or repeated project file path: ${file.path}`);
     }
     seen.add(file.path);
@@ -184,60 +185,70 @@ export async function filmRev(text: string): Promise<string> {
     someone else moved it first. `expect === null` means "no condition": the first write, or an
     import that owns the project it just made. */
 export async function writeFilm(id: string, text: string, expect: string | null): Promise<string | null> {
-  const dir = await projectDir(id);
-  if (!dir) return null;
-  if (expect !== null) {
-    const current = await readText(dir, FILM);
-    const currentRev = current === null ? null : await filmRev(current);
-    if (currentRev !== expect) return null;
-  }
-  await writeText(dir, text, FILM);
-  const rev = await filmRev(text);
-  tell({ type: 'film', rev });
-  return rev;
+  return withProjectLock(id, async () => {
+    const dir = await projectDir(id);
+    if (!dir) return null;
+    if (expect !== null) {
+      const current = await readText(dir, FILM);
+      const currentRev = current === null ? null : await filmRev(current);
+      if (currentRev !== expect) return null;
+    }
+    await writeText(dir, text, FILM);
+    const rev = await filmRev(text);
+    tell({ type: 'film', rev });
+    return rev;
+  });
 }
 
 /** A project deleted whole (its folder out of OPFS). */
 export async function deleteProject(id: string): Promise<void> {
-  await removeTree(await root(), id);
-  tell({ type: 'gone' });
+  return withProjectLock(id, async () => {
+    await removeTree(await root(), id);
+    tell({ type: 'gone' });
+  });
 }
 
 /** A project renamed (the name a person sees; the folder — the id — stays). */
 export async function renameProject(id: string, name: string): Promise<StoreProject | null> {
-  const dir = await projectDir(id);
-  if (!dir) return null;
-  const clean = name.trim().replace(/[/\\:*?"<>|]/g, ' ').replace(/\s+/g, ' ').slice(0, 120) || 'Untitled';
-  await writeState(dir, STATE_NAME, clean);
-  tell({ type: 'project' });
-  return describe(dir, id);
+  return withProjectLock(id, async () => {
+    const dir = await projectDir(id);
+    if (!dir) return null;
+    const clean = name.trim().replace(/[/\\:*?"<>|]/g, ' ').replace(/\s+/g, ' ').slice(0, 120) || 'Untitled';
+    await writeState(dir, STATE_NAME, clean);
+    tell({ type: 'project' });
+    return describe(dir, id);
+  });
 }
 
 
 /** Opened now: the list's `recent` order follows it. */
 export async function markOpened(id: string): Promise<void> {
-  const dir = await projectDir(id);
-  if (!dir) return;
-  await writeState(dir, STATE_OPENED, String(Date.now()));
-  tell({ type: 'project' });
+  return withProjectLock(id, async () => {
+    const dir = await projectDir(id);
+    if (!dir) return;
+    await writeState(dir, STATE_OPENED, String(Date.now()));
+    tell({ type: 'project' });
+  });
 }
 
 /** A cover the person chose (an image's bytes); clears when `data` is null. */
 export async function setCover(id: string, data: ArrayBuffer | null): Promise<number | null> {
-  const dir = await projectDir(id);
-  if (!dir) return null;
-  if (data === null) {
-    await removeFile(dir, STATE, 'cover.png');
-    await writeState(dir, STATE_COVER, '');
+  return withProjectLock(id, async () => {
+    const dir = await projectDir(id);
+    if (!dir) return null;
+    if (data === null) {
+      await removeFile(dir, STATE, 'cover.png');
+      await writeState(dir, STATE_COVER, '');
+      tell({ type: 'project' });
+      return null;
+    }
+    await ensureDir(dir, [STATE]);
+    await writeBytes(dir, data, STATE, 'cover.png');
+    const at = Date.now();
+    await writeState(dir, STATE_COVER, String(at));
     tell({ type: 'project' });
-    return null;
-  }
-  await ensureDir(dir, [STATE]);
-  await writeBytes(dir, data, STATE, 'cover.png');
-  const at = Date.now();
-  await writeState(dir, STATE_COVER, String(at));
-  tell({ type: 'project' });
-  return at;
+    return at;
+  });
 }
 
 /* ── files: the project's assets/ (and its own pages at the top) ── */
@@ -251,46 +262,29 @@ const kindOf = (name: string): StoreFile['kind'] => {
   return 'other';
 };
 
-async function collect(dir: FileSystemDirectoryHandle, prefix: string, out: StoreFile[]): Promise<void> {
-  const { files, folders } = await children(dir);
-  for (const name of files) {
-    const path = prefix ? `${prefix}/${name}` : name;
-    const st = await statFile(dir, name);
-    if (st) out.push({ path, kind: kindOf(name), size: st.size, mtime: st.mtime });
-  }
-  for (const name of folders) {
-    await collect(await dir.getDirectoryHandle(name, { create: false }), prefix ? `${prefix}/${name}` : name, out);
-  }
-}
-
-/** A project's files: its pages (top-level html) and everything under `assets/`. */
+/** Every project source file, including nested pages/fonts/scripts; internal state is excluded. */
 export async function listFiles(id: string): Promise<StoreListing> {
   const dir = await projectDir(id);
-  const out: StoreFile[] = [];
-  if (!dir) return { files: out, folders: [], pages: [] };
-  const { files } = await children(dir);
-  const pages: { path: string; size: number; mtime: number }[] = [];
-  for (const name of files) {
-    if (name === FILM) continue;
-    if (kindOf(name) === 'page') {
-      const st = await statFile(dir, name);
-      if (st) pages.push({ path: name, size: st.size, mtime: st.mtime });
-      continue;
-    }
-    const st = await statFile(dir, name);
-    if (st) out.push({ path: name, kind: kindOf(name), size: st.size, mtime: st.mtime });
+  if (!dir) return { files: [], folders: [], pages: [] };
+  const files: StoreFile[] = [];
+  const pages: StoreListing['pages'] = [];
+  const folders = new Set<string>();
+  for (const item of await projectFiles(dir, { outputs: true })) {
+    if (item.path === FILM) continue;
+    const f = await item.handle.getFile();
+    const parts = item.path.split('/');
+    for (let i = 1; i < parts.length; i++) folders.add(parts.slice(0, i).join('/'));
+    const entry = { path: item.path, size: f.size, mtime: f.lastModified };
+    const kind = kindOf(item.path);
+    if (kind === 'page') pages.push(entry);
+    else files.push({ ...entry, kind });
   }
-  const assets = await walk(dir, [ASSETS]);
-  if (assets) await collect(assets, ASSETS, out);
-  /* Web exports are first-class project files: the media pane can download/reuse them, WebMCP
-     can list them, and an interchange package carries its finished deliverables. */
-  const downloads = await walk(dir, [DOWNLOADS]);
-  if (downloads) await collect(downloads, DOWNLOADS, out);
-  return { files: out, folders: [ASSETS, ...(downloads ? [DOWNLOADS] : [])], pages };
+  return { files, folders: [...folders].sort(), pages };
 }
 
 /** A file of the project read as text (a page, a style, a worker script). */
 export async function readFileText(id: string, path: string): Promise<string | null> {
+  if (!safeProjectPath(path) && path !== '.film/folder') throw new Error('invalid project file path');
   const dir = await projectDir(id);
   if (!dir) return null;
   return readText(dir, ...path.split('/'));
@@ -298,6 +292,7 @@ export async function readFileText(id: string, path: string): Promise<string | n
 
 /** A file of the project read as bytes (media into an object URL). */
 export async function readFileBytes(id: string, path: string): Promise<ArrayBuffer | null> {
+  if (!safeProjectPath(path) && path !== '.film/folder') throw new Error('invalid project file path');
   const dir = await projectDir(id);
   if (!dir) return null;
   return readBytes(dir, ...path.split('/'));
@@ -311,17 +306,36 @@ export function tellHistory(moved: boolean): void {
 }
 
 /** A file put into the project (a dropped or pasted one). */
+export function writePage(id: string, path: string, text: string | null, expect: string | null): Promise<string | null> {
+  if (!safeProjectPath(path) || path === FILM) throw new Error('invalid page path');
+  return withProjectLock(id, async () => {
+    const dir = await projectDir(id); if (!dir) throw new Error('the project is gone');
+    const before = await readText(dir, ...path.split('/'));
+    const rev = before === null ? null : await filmRev(before);
+    if (rev !== expect) throw Object.assign(new Error('the page changed since it was read'), { status: 409, rev });
+    if (text === null) await removeFile(dir, ...path.split('/'));
+    else await writeText(dir, text, ...path.split('/'));
+    tell({type:'files',paths:[path]}); return text === null ? null : filmRev(text);
+  });
+}
+
 export async function putFile(id: string, path: string, data: Blob | ArrayBuffer): Promise<void> {
-  const dir = await projectDir(id);
-  if (!dir) return;
-  await writeBytes(dir, data, ...path.split('/'));
-  tell({ type: 'files', paths: [path] });
+  if (!safeProjectPath(path) && path !== '.film/folder') throw new Error('invalid project file path');
+  return withProjectLock(id, async () => {
+    const dir = await projectDir(id);
+    if (!dir) return;
+    await writeBytes(dir, data, ...path.split('/'));
+    tell({ type: 'files', paths: [path] });
+  });
 }
 
 /** A file taken away. */
 export async function deleteFile(id: string, path: string): Promise<void> {
-  const dir = await projectDir(id);
-  if (!dir) return;
-  await removeFile(dir, ...path.split('/'));
-  tell({ type: 'files', paths: [path] });
+  if (!safeProjectPath(path) && path !== '.film/folder') throw new Error('invalid project file path');
+  return withProjectLock(id, async () => {
+    const dir = await projectDir(id);
+    if (!dir) return;
+    await removeFile(dir, ...path.split('/'));
+    tell({ type: 'files', paths: [path] });
+  });
 }

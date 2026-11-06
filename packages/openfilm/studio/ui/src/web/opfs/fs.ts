@@ -51,14 +51,24 @@ export async function ensureDir(from: FileSystemDirectoryHandle, parts: string[]
 
 /** Read a file as text; null when it is not there. */
 export async function readText(dir: FileSystemDirectoryHandle, ...parts: string[]): Promise<string | null> {
-  const file = await readFileHandle(dir, parts);
-  return file ? (await file.getFile()).text() : null;
+  return readContents(dir, parts, (file) => file.text());
 }
 
 /** Read a file as an ArrayBuffer; null when it is not there. */
 export async function readBytes(dir: FileSystemDirectoryHandle, ...parts: string[]): Promise<ArrayBuffer | null> {
-  const file = await readFileHandle(dir, parts);
-  return file ? (await file.getFile()).arrayBuffer() : null;
+  return readContents(dir, parts, (file) => file.arrayBuffer());
+}
+
+/** OPFS invalidates File snapshots when another writer closes the same path. Reopen that path
+ * for a fresh snapshot; a concurrent metadata touch must not make opening a project fail. */
+async function readContents<T>(dir: FileSystemDirectoryHandle, parts: string[], read: (file: File) => Promise<T>): Promise<T | null> {
+  for (let attempt = 0; ; attempt++) {
+    const handle = await readFileHandle(dir, parts); if (!handle) return null;
+    try { return await read(await handle.getFile()); }
+    catch (error) {
+      if (attempt >= 2 || !['NotFoundError', 'NotReadableError'].includes((error as Error).name)) throw error;
+    }
+  }
 }
 
 async function readFileHandle(dir: FileSystemDirectoryHandle, parts: string[]): Promise<FileSystemFileHandle | null> {
@@ -78,19 +88,28 @@ async function readFileHandle(dir: FileSystemDirectoryHandle, parts: string[]): 
     is the one state the format cannot read, so text goes in one write (OPFS writes are atomic in
     practice within one origin) and a `.part` rename is not needed. */
 export async function writeText(dir: FileSystemDirectoryHandle, text: string, ...parts: string[]): Promise<void> {
-  const parent = await ensureDir(dir, parts.slice(0, -1));
-  const file = await parent.getFileHandle(parts[parts.length - 1], { create: true });
-  const writable = await file.createWritable();
-  await writable.write(text);
-  await writable.close();
+  return writeBytes(dir, new Blob([text]), ...parts);
 }
 
 export async function writeBytes(dir: FileSystemDirectoryHandle, data: Blob | ArrayBuffer, ...parts: string[]): Promise<void> {
   const parent = await ensureDir(dir, parts.slice(0, -1));
-  const file = await parent.getFileHandle(parts[parts.length - 1], { create: true });
-  const writable = await file.createWritable();
-  await writable.write(data);
-  await writable.close();
+  const name = parts[parts.length - 1]!;
+  let existed = true;
+  try { await parent.getFileHandle(name); } catch (error) {
+    if ((error as Error).name !== 'NotFoundError' && (error as Error).message !== 'NotFoundError') throw error;
+    existed = false;
+  }
+  let writable: FileSystemWritableFileStream | undefined;
+  try {
+    const file = await parent.getFileHandle(name, { create: true });
+    writable = await file.createWritable(); await writable.write(data); await writable.close();
+  } catch (error) {
+    await writable?.abort().catch(() => {});
+    // create:true publishes an empty handle before close. Do not let a failed first index write
+    // shadow a complete legacy index; existing files retain their previous atomic contents.
+    if (!existed) await parent.removeEntry(name).catch(() => {});
+    throw error;
+  }
 }
 
 /** Remove a file; nothing when it is not there. */

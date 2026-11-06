@@ -12,6 +12,16 @@ import {
 const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0]);
 const png64 = btoa(String.fromCharCode(...png));
 
+test('same-origin media needs no CDN proxy and cannot escape to another local service', () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', { value: { origin: 'http://127.0.0.1:13689' }, configurable: true });
+  try {
+    assert.equal(parseMediaUrl('/examples/music.mp3').origin, 'http://127.0.0.1:13689');
+    assert.throws(() => parseMediaUrl('http://127.0.0.1:13688/music.mp3'), MediaIntakeError);
+    assert.throws(() => parseMediaUrl('http://user:pass@127.0.0.1:13689/music.mp3'), MediaIntakeError);
+  } finally { if (previous) Object.defineProperty(globalThis, 'location', previous); else delete (globalThis as { location?: unknown }).location; }
+});
+
 test('URL intake is HTTPS and exact-host allowlisted', () => {
   assert.equal(parseMediaUrl('https://images.pexels.com/photos/a.jpg?w=20').hostname, 'images.pexels.com');
   assert.equal(parseMediaUrl('https://cdn.pixabay.com/photo/a.png').hostname, 'cdn.pixabay.com');

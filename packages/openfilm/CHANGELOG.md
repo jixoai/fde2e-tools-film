@@ -2,8 +2,11 @@
 
 ## 0.3.0 — FDE2E Film Web edition
 
-- Browser-only OPFS projects, version history, interchange packages and persistent exports.
-- 35 WebMCP tools for inspect, edit, project and produce workflows, with BU/Omni bridge support.
+- Browser-only OPFS projects with complete recursive version snapshots, explicit current version, verified interchange packages and persistent exports.
+- Isolated render documents keep export capture independent from the editor; BU capture handles are bound to the parent document and cleaned on navigation.
+- ProRes, VP9 alpha, GIF, WAV/MP3/M4A, MKV, subtitle burn/sidecars, PNG sequences, joined ranges and project ZIP exports use the same UI and tool paths.
+- VP9 alpha uses the bundled ST encoder with intra frames to avoid the pinned libvpx inter-frame crash; it may produce larger files than WebCodecs MP4.
+- 44 WebMCP tools for inspect, edit, project and produce workflows, with BU/Omni bridge support.
 - WebCodecs MP4/WebM encoding, browser audio mixdown, same-origin single-thread ffmpeg.wasm fallback and bounded-memory long exports.
 - Bundled checksum-verified One Prompt example and passive local/base64/allowlisted-URL media intake.
 - Production static deployment at `film.tool.fde2e.com` with SPA, Range, WASM/worker MIME and non-COI guarantees.

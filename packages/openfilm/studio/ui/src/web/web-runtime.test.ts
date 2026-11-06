@@ -30,3 +30,17 @@ test('runtime waiting is abortable and times out with an actionable error', asyn
   await assert.rejects(aborted, /test stop/);
   await assert.rejects(waitForWebProjectRuntime('missing-project', { timeoutMs: 5 }), /did not become ready within/);
 });
+
+test('a mounted runtime cannot export its previous picture while a new load is pending', async () => {
+  const mounted = runtime('reloading-project');
+  let ready = false;
+  mounted.source.ready = () => ready;
+  const stop = registerWebProjectRuntime(mounted);
+  let resolved = false;
+  const pending = waitForWebProjectRuntime(mounted.projectId, { timeoutMs: 1_000 }).then(value => { resolved = true; return value; });
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(resolved, false);
+  ready = true;
+  assert.equal(await pending, mounted);
+  stop();
+});

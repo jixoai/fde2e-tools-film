@@ -32,7 +32,9 @@ export type Target = {
 };
 export type PreviewHandle = {
   /** Show the still moment t (the film stops playing). */
-  seek(t: number): void;
+  seek(t: number, strict?: boolean): number | void;
+  /** Latest load and in-place update have been drawn, with no older frame still showing. */
+  ready?(): boolean;
   /** Play on this line (the player's, on this page's clock): the film draws its own frames from it until `seek`. */
   play?(anchor: Anchor): void;
   /** Stretches rendered to play in place of the film while it plays (studio/server/preview-cache.mjs); [] none. */
@@ -190,6 +192,7 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ folde
   /* the frames whose film said it is ready: each is told every edit from then on, the one loading behind too (it is
      shown next, and must not come up without the edits made while it drew its first picture) */
   const up = useRef(new Set<number>());
+  const drawnSeq = useRef(new Map<number, number>());
   /* one ref callback a frame keeps for its life: a new one each render would be called with null on every render,
      and drop the clock, scale and readiness measured for a frame still on screen */
   const refs = useRef(new Map<number, (el: HTMLIFrameElement | null) => void>());
@@ -205,16 +208,26 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ folde
     return ref;
   };
   /** load the film again behind the picture (its structure changed, or the folder's film was replaced) */
-  const reload = () => setFrames((list) => {
-    const next = reloaded(list);
+  const reload = () => {
+    const next = reloaded(framesRef.current);
     born.current.set(next[next.length - 1].key, updates.current);
-    return next;
-  });
+    // Publish pending work synchronously: a produce call can arrive before React commits it.
+    framesRef.current = next;
+    setFrames(next);
+  };
 
   useImperativeHandle(ref, () => ({
-    seek(t) {
+    seek(t, strict = false) {
       line.current = null;
-      post(shownRef.current?.key, { type: 'seek', t, seq: ++seq.current });
+      const sent = ++seq.current;
+      post(shownRef.current?.key, { type: 'seek', t, seq: sent, strict });
+      return sent;
+    },
+    ready() {
+      const current = framesRef.current;
+      const key = shownRef.current?.key;
+      return key != null && current.length === 1 && current[0].key === key && current[0].ready
+        && !current[0].error && (drawnSeq.current.get(key) ?? 0) >= (updateSeq.current.get(key) ?? 0);
     },
     play(anchor) {
       line.current = { ...anchor };
@@ -286,7 +299,8 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ folde
    * while it drew, and seeks went to the frame shown then.
    */
   const show = (key: number, t: number, swap: boolean) => {
-    setFrames((list) => shownAfter(list, key));
+    framesRef.current = shownAfter(framesRef.current, key);
+    setFrames(framesRef.current);
     if (swap && line.current) tellPlay(key);
     else if (swap && Math.abs(time() - t) > 1e-6) post(key, { type: 'seek', t: time(), seq: ++seq.current });
   };
@@ -374,6 +388,7 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ folde
         /* playing on it: told the line again, on its clock as now read */
         if (line.current && key === shownRef.current?.key) tellPlay(key);
       } else if (m.type === 'seeked') {
+        drawnSeq.current.set(key, Math.max(drawnSeq.current.get(key) ?? 0, Number(m.seq) || 0));
         const swap = !framesRef.current.find((f) => f.key === key)?.ready;
         /* a load behind the picture, ready while a drag or a line typed in place is under way, or before it has drawn
            the film as it is now: shown once it may be (the first load, with nothing shown yet, is shown at once) */
@@ -485,6 +500,7 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ folde
             allow="autoplay"
             scrolling="no"
             title="film"
+            data-film-width={stage.w}
             /* the one loading is all but transparent, not hidden: the film is on another site, in a process of its own,
                and a frame hidden from there is not drawn at all, so a page that waits to draw (an image's decode()) would
                never be ready; nor quite 0, or it is not put on screen at all, and is blank for a moment when it is shown */

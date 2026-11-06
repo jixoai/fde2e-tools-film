@@ -20,21 +20,23 @@ test('four families present with their tools', () => {
       'edit_set_track', 'edit_reorder_tracks', 'edit_set_stage', 'edit_restore_overrides',
       'edit_write_page', 'edit_read_page', 'edit_list_versions', 'edit_save_version',
       'edit_checkout_version', 'edit_discard_changes', 'edit_copy_version',
+      'edit_list_deleted_versions', 'edit_delete_versions', 'edit_recover_versions', 'edit_restore_film',
     ],
-    projects: ['projects_list', 'projects_list_media', 'projects_import_media', 'projects_create', 'projects_open', 'projects_delete', 'projects_export_package', 'projects_load_example'],
-    produce: ['produce_look', 'produce_render', 'produce_export_status'],
+    projects: ['projects_list', 'projects_list_media', 'projects_import_media', 'projects_create', 'projects_open', 'projects_delete', 'projects_export_package', 'projects_load_example', 'projects_import_package', 'projects_rename', 'projects_read_file', 'projects_package_channel'],
+    produce: ['produce_look', 'produce_render', 'produce_export_status', 'produce_cancel_export'],
   };
   for (const tools of Object.values(families)) {
     for (const name of tools) assert.ok(byName.has(name), `missing tool: ${name}`);
   }
-  assert.equal(defs.length, 35); // 15 four-family tools + 20 edit-family verbs
+  assert.equal(new Set(defs.map((def) => def.name)).size, defs.length);
+  assert.deepEqual([...byName.keys()].sort(), Object.values(families).flat().sort());
 });
 
 test('guardrail annotations: read-only where promised, consequential on delete', () => {
-  for (const name of ['film_state', 'film_problems', 'film_overrides', 'projects_list', 'projects_list_media', 'projects_export_package', 'produce_export_status']) {
+  for (const name of ['film_state', 'film_problems', 'film_overrides', 'projects_list', 'projects_list_media', 'projects_export_package', 'produce_export_status', 'produce_look']) {
     assert.equal(byName.get(name)?.annotations?.readOnlyHint, true, `${name} should be read-only`);
   }
-  for (const name of ['produce_look', 'produce_render']) {
+  for (const name of ['produce_render']) {
     assert.equal(byName.get(name)?.annotations?.readOnlyHint, false, `${name} creates an export artifact`);
   }
   assert.equal(byName.get('projects_delete')?.annotations?.consequentialHint, true);
@@ -91,7 +93,7 @@ test('registration outside a browser answers supported:false (no document)', asy
 test('produce schemas expose executable capture and render controls', () => {
   const look = byName.get('produce_look')!.inputSchema as { properties: Record<string, unknown> };
   const render = byName.get('produce_render')!.inputSchema as { properties: Record<string, unknown> };
-  assert.deepEqual(Object.keys(look.properties), ['at', 'name', 'shortEdge', 'frame', 'fill']);
+  assert.deepEqual(Object.keys(look.properties), ['media', 'at', 'range', 'moments', 'sheet', 'shortEdge', 'frame', 'fill']);
   assert.ok(['kind', 'from', 'to', 'moments', 'codec', 'format', 'download', 'wait'].every((key) => key in render.properties));
   assert.match(byName.get('produce_render')!.description, /writes atomically to OPFS downloads/);
   assert.match(byName.get('produce_render')!.description, /job immediately by default/);
@@ -121,7 +123,7 @@ test('produce handlers fail closed on malformed kind, frame and fill values', as
   try {
     for (const [name, input, word] of [
       ['produce_look', { frame: 'bogus' }, 'frame'],
-      ['produce_render', { kind: 'audio' }, 'kind'],
+      ['produce_render', { kind: 'unknown' }, 'kind'],
       ['produce_render', { fill: 'stretch' }, 'fill'],
     ] as const) {
       const raw = await byName.get(name)!.execute(input, {});

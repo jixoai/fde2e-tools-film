@@ -40,21 +40,23 @@ export function waitForWebProjectRuntime(
   options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<WebProjectRuntime> {
   const current = webProjectRuntime(projectId);
-  if (current) return Promise.resolve(current);
+  if (current && current.source.ready?.() !== false && !options.signal?.aborted) return Promise.resolve(current);
   const timeoutMs = options.timeoutMs ?? 20_000;
   return new Promise<WebProjectRuntime>((resolve, reject) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout>;
+    let pulse: ReturnType<typeof setInterval>;
     const waiting = waiters.get(projectId) ?? new Set<(runtime: WebProjectRuntime) => void>();
     waiters.set(projectId, waiting);
     const cleanup = () => {
       clearTimeout(timer);
+      clearInterval(pulse);
       options.signal?.removeEventListener('abort', onAbort);
       waiting.delete(onRuntime);
       if (waiting.size === 0 && waiters.get(projectId) === waiting) waiters.delete(projectId);
     };
     const finish = (runtime: WebProjectRuntime) => {
-      if (settled) return;
+      if (settled || runtime.source.ready?.() === false) return;
       settled = true;
       cleanup();
       resolve(runtime);
@@ -69,6 +71,7 @@ export function waitForWebProjectRuntime(
     const onAbort = () => fail(options.signal?.reason ?? new DOMException('aborted', 'AbortError'));
     waiting.add(onRuntime);
     timer = setTimeout(() => fail(new Error(`the open project preview did not become ready within ${timeoutMs / 1000}s`)), timeoutMs);
+    pulse = setInterval(() => { const value = webProjectRuntime(projectId); if (value) finish(value); }, 25);
     if (options.signal?.aborted) { onAbort(); return; }
     options.signal?.addEventListener('abort', onAbort, { once: true });
     const raced = webProjectRuntime(projectId);
