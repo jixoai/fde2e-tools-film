@@ -206,6 +206,36 @@ test('a sound used by many clips is one input, split and cut in the graph: the s
   }
 });
 
+test('a mix keeps its padding when amix stops supplying timestamps', { timeout: 30_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'openfilm-mix-clock-'));
+  try {
+    const tone = join(dir, 'tone.wav');
+    const generated = spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=330:duration=2.5:sample_rate=48000', tone], { encoding: 'utf8' });
+    assert.equal(generated.status, 0, generated.stderr);
+    const clips = [{ file: tone, at: 0, from: 0, volume: 1, speed: 1, channels: 1 }];
+    const clean = join(dir, 'clean.wav'), missing = join(dir, 'missing-pts.wav');
+    await mix(clips, 3, clean, ['-c:a', 'pcm_s16le']);
+    const { inputs, filter } = mixGraph(clips, 3);
+    // The observed amix failure starts at sample 24000: later samples have
+    // AV_NOPTS_VALUE. Inject that stream condition at the mixer output so this
+    // regression is deterministic, independent of ffmpeg's input-thread timing.
+    const interrupted = filter.replace(/amix=[^,;]+/, "$&,asetpts='if(gte(N,24000),NAN,PTS)'");
+    assert.notEqual(interrupted, filter, 'the fault must reach the real mixer output');
+    await ffmpeg([...inputs, '-filter_complex', interrupted, '-map', '[out]', '-t', '3', '-c:a', 'pcm_s16le', missing], { timeoutMs: 20_000 }).done;
+    const pcm = (file) => {
+      const decoded = spawnSync('ffmpeg', ['-v', 'error', '-i', file, '-f', 's16le', 'pipe:1'], { maxBuffer: 1024 * 1024 });
+      assert.equal(decoded.status, 0, String(decoded.stderr));
+      assert.equal(decoded.stdout.length, 144000 * 2 * 2, `${file}: exactly 3 seconds of 48 kHz stereo PCM16`);
+      return decoded.stdout;
+    };
+    assert.deepEqual(pcm(missing), pcm(clean), 'missing timestamps must not change, drop or repeat any audio sample');
+    for (const t of [0.25, 1.25, 2.25]) assert.ok(levelAt(missing, t) > 0.05, `the source is heard at ${t} s`);
+    assert.equal(levelAt(missing, 2.6), 0, 'the tail remains actual silence through the requested film length');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a mix of hundreds of sounds keeps its command short: its graph goes in a file, gone once mixed', { timeout: 120_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'openfilm-mix-many-'));
   try {

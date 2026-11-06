@@ -328,8 +328,11 @@ export function mixGraph(clips, duration) {
     const mono = c.channels === 1 ? ',pan=stereo|c0=c0|c1=c0' : '';
     return `${source[i]}${trim},volume=${c.volume},adelay=${delay}:all=1${mono},aresample=48000,aformat=channel_layouts=stereo[a${i}]`;
   });
-  /* padded to the film's length and no further, and cut there: the mix always ends */
-  const sum = `${clips.map((_, i) => `[a${i}]`).join('')}amix=inputs=${clips.length}:normalize=0:dropout_transition=0,apad=whole_dur=${duration},atrim=0:${duration}[out]`;
+  /* amix can lose PTS when its first input ends before the others. The delayed
+     samples already occupy their film positions; rebuild their continuous clock
+     before apad, whose arithmetic on missing PTS otherwise gives padding a
+     negative timestamp that atrim discards. */
+  const sum = `${clips.map((_, i) => `[a${i}]`).join('')}amix=inputs=${clips.length}:normalize=0:dropout_transition=0,asetpts=N/SR/TB,apad=whole_dur=${duration},atrim=0:${duration}[out]`;
   return { inputs, filter: [...splits, ...chains, sum].join(';') };
 }
 

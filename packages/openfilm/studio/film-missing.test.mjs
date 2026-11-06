@@ -62,7 +62,10 @@ test('film.html deleted and written again 3 s later (an agent replacing it whole
   assert.equal(new URL(page.url()).pathname, address);
   assert.equal(await page.getByText('film.html is empty').count(), 0, 'no empty film was shown');
   /* its whole folder gone: the page leaves it, as before (with tabs, its tab closes) */
-  await rm(root, { recursive: true, force: true });
+  // The watcher's in-flight history write can create .film files while recursive
+  // deletion is walking the directory. Retry that bounded filesystem race, just
+  // as teardown does, then still require Studio to observe the folder's removal.
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   await page.waitForURL((url) => url.pathname !== address, { timeout: 10_000 });
 });
 
